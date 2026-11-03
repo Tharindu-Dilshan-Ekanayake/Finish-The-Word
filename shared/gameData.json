@@ -1,0 +1,578 @@
+{
+  "bloxity": {
+    "gameSlug": "slap-chips",
+    "roomName": "game",
+    "leaderboards": [
+      {
+        "id": "wins",
+        "label": "Wins",
+        "order": "desc",
+        "mode": "sum",
+        "format": "number",
+        "reset": "weekly"
+      },
+      {
+        "id": "best_streak",
+        "label": "Best Streak",
+        "order": "desc",
+        "mode": "best",
+        "format": "number",
+        "reset": "none"
+      },
+      {
+        "id": "level",
+        "label": "Level",
+        "order": "desc",
+        "mode": "best",
+        "format": "number",
+        "reset": "none"
+      },
+      {
+        "id": "playtime",
+        "label": "Minutes Played",
+        "order": "desc",
+        "mode": "sum",
+        "format": "number",
+        "reset": "none"
+      }
+    ]
+  },
+  "roomSize": 20,
+  "chips": {
+    "cols": 3,
+    "rows": 3,
+    "slaps": 3,
+    "hearts": 3,
+    "goldenCash": 50
+  },
+  "forfeit": {
+    "penalty": 50,
+    "slaps": 3,
+    "slapFirst": 0.4,
+    "slapGap": 1.05
+  },
+  "winReward": 200,
+  "timing": {
+    "countdown": 3,
+    "hide": 20,
+    "turn": 12,
+    "results": 5,
+    "bite": 1.1,
+    "loserRespawn": 3.6
+  },
+  "world": {
+    "half": 31,
+    "spawn": [0, 0, 25.5]
+  },
+  "table": {
+    "width": 3.6,
+    "depth": 1.7,
+    "height": 0.82,
+    "seatX": 0.9,
+    "seatZ": 1.2,
+    "sitRange": 4
+  },
+  "tables": [
+    { "id": 1, "x": 3.86, "z": 11.89, "ry": -2.8274 },
+    { "id": 2, "x": 10.11, "z": 7.35, "ry": -2.1991 },
+    { "id": 3, "x": 12.5, "z": 0, "ry": -1.5708 },
+    { "id": 4, "x": 10.11, "z": -7.35, "ry": -0.9425 },
+    { "id": 5, "x": 3.86, "z": -11.89, "ry": -0.3142 },
+    { "id": 6, "x": -3.86, "z": -11.89, "ry": 0.3142 },
+    { "id": 7, "x": -10.11, "z": -7.35, "ry": 0.9425 },
+    { "id": 8, "x": -12.5, "z": 0, "ry": 1.5708 },
+    { "id": 9, "x": -10.11, "z": 7.35, "ry": 2.1991 },
+    { "id": 10, "x": -3.86, "z": 11.89, "ry": 2.8274 }
+  ],
+  "leaderboards": [
+    {
+      "id": "levels",
+      "title": "TOP LEVELS ⭐",
+      "format": "level",
+      "x": 11.12,
+      "z": -21.83,
+      "ry": -0.4712
+    },
+    {
+      "id": "streaks",
+      "title": "TOP STREAKS 🔥",
+      "x": 3.83,
+      "z": -24.2,
+      "ry": -0.1571
+    },
+    {
+      "id": "wins",
+      "title": "TOP WINS 🏆",
+      "x": -3.83,
+      "z": -24.2,
+      "ry": 0.1571
+    },
+    {
+      "id": "playtime",
+      "title": "MOST PLAYED ⏱️",
+      "format": "duration",
+      "x": -11.12,
+      "z": -21.83,
+      "ry": 0.4712
+    }
+  ],
+  "emoteShop": {
+    "x": -24,
+    "z": 0
+  },
+  "chairs": [
+    {
+      "id": "basic",
+      "name": "Basic",
+      "rarity": "common",
+      "price": 0,
+      "color": "#6b4329"
+    },
+    {
+      "id": "metal",
+      "name": "Metal Chair",
+      "rarity": "common",
+      "price": 100,
+      "color": "#8a96a8",
+      "shop": [16.97, 16.97]
+    },
+    {
+      "id": "picnic",
+      "name": "Picnic Chair",
+      "rarity": "common",
+      "price": 300,
+      "color": "#e8504a",
+      "shop": [19.66, 13.77]
+    },
+    {
+      "id": "nature",
+      "name": "Nature Chair",
+      "rarity": "uncommon",
+      "price": 800,
+      "color": "#2fd14f",
+      "shop": [21.75, 10.14]
+    },
+    {
+      "id": "candy",
+      "name": "Candy Chair",
+      "rarity": "uncommon",
+      "price": 1200,
+      "color": "#ff7fc8",
+      "shop": [23.18, 6.21]
+    },
+    {
+      "id": "storm",
+      "name": "Storm Chair",
+      "rarity": "rare",
+      "price": 2000,
+      "color": "#7fe3ff",
+      "shop": [23.91, 2.09]
+    },
+    {
+      "id": "ocean",
+      "name": "Ocean Chair",
+      "rarity": "rare",
+      "price": 3000,
+      "color": "#2f7dff",
+      "shop": [23.91, -2.09]
+    },
+    {
+      "id": "lava",
+      "name": "Lava Chair",
+      "rarity": "epic",
+      "price": 5000,
+      "color": "#ff5a1f",
+      "shop": [23.18, -6.21]
+    },
+    {
+      "id": "golden",
+      "name": "Golden Throne",
+      "rarity": "epic",
+      "price": 9000,
+      "color": "#ffc93d",
+      "style": "throne",
+      "shop": [21.75, -10.14]
+    },
+    {
+      "id": "void",
+      "name": "Void Throne",
+      "rarity": "legendary",
+      "price": 16000,
+      "color": "#9b3dff",
+      "style": "throne",
+      "shop": [19.66, -13.77]
+    },
+    {
+      "id": "diamond",
+      "name": "Diamond Throne",
+      "rarity": "mythic",
+      "price": 30000,
+      "color": "#8ff4ff",
+      "style": "throne",
+      "shop": [16.97, -16.97]
+    }
+  ],
+  "emotes": [
+    {
+      "id": "yum",
+      "label": "YUM",
+      "icon": "😋",
+      "price": 0
+    },
+    {
+      "id": "ouch",
+      "label": "OUCH",
+      "icon": "😵",
+      "price": 0
+    },
+    {
+      "id": "noway",
+      "label": "NO WAY",
+      "icon": "😱",
+      "price": 0
+    },
+    {
+      "id": "lol",
+      "label": "LOL",
+      "icon": "🤣",
+      "price": 200
+    },
+    {
+      "id": "niceone",
+      "label": "NICE ONE",
+      "icon": "👏",
+      "price": 200
+    },
+    {
+      "id": "fairplay",
+      "label": "FAIR PLAY",
+      "icon": "🤝",
+      "price": 200
+    },
+    {
+      "id": "gg",
+      "label": "GG",
+      "icon": "👍",
+      "price": 200
+    },
+    {
+      "id": "havefun",
+      "label": "HAVE FUN",
+      "icon": "😄",
+      "price": 200
+    },
+    {
+      "id": "how",
+      "label": "HOW",
+      "icon": "⁉️",
+      "price": 600
+    },
+    {
+      "id": "wow",
+      "label": "WOW",
+      "icon": "😮",
+      "price": 600
+    },
+    {
+      "id": "bruh",
+      "label": "BRUH",
+      "icon": "😭",
+      "price": 600
+    },
+    {
+      "id": "byebye",
+      "label": "BYE BYE",
+      "icon": "👋",
+      "price": 3500
+    },
+    {
+      "id": "urcooked",
+      "label": "UR COOKED",
+      "icon": "😭",
+      "price": 3500
+    },
+    {
+      "id": "imcooked",
+      "label": "I'M COOKED",
+      "icon": "💔",
+      "price": 3500
+    },
+    {
+      "id": "genius",
+      "label": "GENIUS",
+      "icon": "🧠",
+      "price": 1200
+    },
+    {
+      "id": "easy",
+      "label": "TOO EASY",
+      "icon": "😎",
+      "price": 1200
+    },
+    {
+      "id": "rematch",
+      "label": "REMATCH?",
+      "icon": "🔁",
+      "price": 600
+    },
+    {
+      "id": "crunchy",
+      "label": "SO CRUNCHY",
+      "icon": "🥔",
+      "price": 1200
+    },
+    {
+      "id": "spicy",
+      "label": "TOO SPICY",
+      "icon": "🌶️",
+      "price": 3500
+    }
+  ],
+  "passes": [
+    {
+      "id": "cash2x",
+      "name": "2X CASH",
+      "icon": "💵",
+      "price": 10000,
+      "desc": "Double cash from every win"
+    },
+    {
+      "id": "wins2x",
+      "name": "2X WINS",
+      "icon": "🏆",
+      "price": 10000,
+      "desc": "Every win counts twice"
+    },
+    {
+      "id": "streak2x",
+      "name": "2X STREAK",
+      "icon": "🔥",
+      "price": 10000,
+      "desc": "Streak grows by 2 per win"
+    }
+  ],
+  "starterPack": {
+    "price": 1500,
+    "chair": "lava",
+    "emotes": [
+      "gg",
+      "lol"
+    ]
+  },
+  "quests": [
+    {
+      "id": "play3",
+      "label": "Play 3 Duels",
+      "event": "play",
+      "goal": 3,
+      "reward": 300
+    },
+    {
+      "id": "play6",
+      "label": "Play 6 Duels",
+      "event": "play",
+      "goal": 6,
+      "reward": 700
+    },
+    {
+      "id": "win2",
+      "label": "Win 2 Duels",
+      "event": "win",
+      "goal": 2,
+      "reward": 500
+    },
+    {
+      "id": "win5",
+      "label": "Win 5 Duels",
+      "event": "win",
+      "goal": 5,
+      "reward": 1200
+    },
+    {
+      "id": "flawless",
+      "label": "Win Without Losing A Heart",
+      "event": "flawless",
+      "goal": 1,
+      "reward": 800
+    },
+    {
+      "id": "streak3",
+      "label": "Reach a 3 Win Streak",
+      "event": "streak3",
+      "goal": 1,
+      "reward": 900
+    },
+    {
+      "id": "crunch10",
+      "label": "Eat 10 Safe Chips",
+      "event": "crunch",
+      "goal": 10,
+      "reward": 400
+    },
+    {
+      "id": "golden1",
+      "label": "Find A Golden Chip",
+      "event": "golden",
+      "goal": 1,
+      "reward": 600
+    },
+    {
+      "id": "emote5",
+      "label": "Use 5 Emotes",
+      "event": "emote",
+      "goal": 5,
+      "reward": 250
+    }
+  ],
+  "gift": {
+    "intervalSec": 600,
+    "min": 50,
+    "max": 300
+  },
+  "daily": {
+    "base": 100,
+    "maxDays": 7
+  },
+  "halos": [
+    {
+      "id": "halo_gold",
+      "name": "Golden Halo",
+      "rarity": "uncommon",
+      "price": 1500,
+      "color": "#ffd23d"
+    },
+    {
+      "id": "halo_frost",
+      "name": "Frost Halo",
+      "rarity": "rare",
+      "price": 3000,
+      "color": "#7fe3ff"
+    },
+    {
+      "id": "halo_toxic",
+      "name": "Toxic Halo",
+      "rarity": "rare",
+      "price": 3500,
+      "color": "#7dff3a"
+    },
+    {
+      "id": "halo_love",
+      "name": "Love Halo",
+      "rarity": "epic",
+      "price": 6000,
+      "color": "#ff5aa5"
+    },
+    {
+      "id": "halo_fire",
+      "name": "Fire Halo",
+      "rarity": "epic",
+      "price": 7500,
+      "color": "#ff6a1f"
+    },
+    {
+      "id": "halo_void",
+      "name": "Void Halo",
+      "rarity": "legendary",
+      "price": 12000,
+      "color": "#b44dff"
+    },
+    {
+      "id": "halo_angel",
+      "name": "Angel Halo",
+      "rarity": "legendary",
+      "price": 15000,
+      "color": "#fff7d6"
+    },
+    {
+      "id": "halo_rainbow",
+      "name": "Rainbow Halo",
+      "rarity": "mythic",
+      "price": 25000,
+      "color": "#ffffff",
+      "rainbow": true
+    }
+  ],
+  "questsPerDay": 3,
+  "streakBonuses": {
+    "3": 150,
+    "5": 400,
+    "10": 1000
+  },
+  "lossReward": 25,
+  "xp": {
+    "win": 40,
+    "loss": 15,
+    "base": 100,
+    "step": 25,
+    "rewardPerLevel": 100,
+    "rewardCap": 2500
+  },
+  "titles": [
+    {
+      "id": "t_rookie",
+      "name": "Chip Rookie",
+      "color": "#c8d0dc",
+      "level": 5
+    },
+    {
+      "id": "t_ninja",
+      "name": "Crunch Ninja",
+      "color": "#5cff5c",
+      "level": 10
+    },
+    {
+      "id": "t_reader",
+      "name": "Slap Dodger",
+      "color": "#4fd8ff",
+      "level": 20
+    },
+    {
+      "id": "t_master",
+      "name": "Chip Master",
+      "color": "#ffb21e",
+      "level": 35
+    },
+    {
+      "id": "t_legend",
+      "name": "Living Legend",
+      "color": "#ff4fd8",
+      "level": 50
+    },
+    {
+      "id": "t_lucky",
+      "name": "Lucky Muncher",
+      "color": "#7dff3a",
+      "price": 500,
+      "rarity": "common"
+    },
+    {
+      "id": "t_brain",
+      "name": "Snack Attack",
+      "color": "#ff7fc8",
+      "price": 2000,
+      "rarity": "uncommon"
+    },
+    {
+      "id": "t_pro",
+      "name": "Iron Cheeks",
+      "color": "#2f9bff",
+      "price": 4000,
+      "rarity": "rare"
+    },
+    {
+      "id": "t_psychic",
+      "name": "Slap Psychic",
+      "color": "#b44dff",
+      "price": 10000,
+      "rarity": "epic"
+    },
+    {
+      "id": "t_oracle",
+      "name": "The Untouchable",
+      "color": "#ffd23d",
+      "price": 25000,
+      "rarity": "legendary",
+      "rainbow": true
+    }
+  ]
+}
