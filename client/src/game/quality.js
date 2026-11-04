@@ -8,6 +8,7 @@ import { usePlatform } from '../bloxity/platform'
  *
  * maxFullAvatars - remote players drawn as full skinned avatars (6+ draw calls
  *                  each); the rest become one instanced low-poly crowd.
+ * maxPets        - pets drawn following their owners (nearest first; yours always).
  */
 export const PRESETS = {
   low: {
@@ -16,6 +17,7 @@ export const PRESETS = {
     shadowMapSize: 0,
     particles: false,
     maxFullAvatars: 3,
+    maxPets: 5,
     /** Name tags drawn at once (nearest players), and table signs (nearest tables). */
     maxNames: 4,
     maxTableSigns: 4,
@@ -32,6 +34,7 @@ export const PRESETS = {
     shadowMapSize: 1024,
     particles: true,
     maxFullAvatars: 6,
+    maxPets: 12,
     maxNames: 10,
     maxTableSigns: 6,
     nameDistance: 28,
@@ -47,6 +50,7 @@ export const PRESETS = {
     shadowMapSize: 2048,
     particles: true,
     maxFullAvatars: 10,
+    maxPets: 20,
     maxNames: 16,
     maxTableSigns: 10,
     nameDistance: 40,

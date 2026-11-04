@@ -26,7 +26,7 @@ import { useDisposable } from './useDisposable'
  *
  * The structure (plinths, banded pillars, beam, crown, flags) is plain boxes, added
  * to the world's shared scenery mesh by archBoxes() in arch.js, so it costs no draw
- * calls of its own. The marquee sign and the slap / chip pillar plaques are one mesh with
+ * calls of its own. The marquee sign and the laughing / ABC pillar plaques are one mesh with
  * one atlas texture: 1 draw call. The bulbs "chase" by swapping between two
  * pre-drawn textures a few times a second, so nothing is redrawn or re-uploaded
  * after start-up.
@@ -87,14 +87,20 @@ function drawAtlas(canvas, phase) {
   for (let y = h - inset - step; y >= inset + 4; y -= step) bulb(inset, y)
   ctx.shadowBlur = 0
 
-  // Title.
-  const size = Math.round(h * 0.46)
+  // Title, shrunk if need be to leave room for a star either side.
+  const text = 'Finish The Word!'
+  let size = Math.round(h * 0.46)
   ctx.font = `700 ${size}px ${GAME_FONT}`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.lineJoin = 'round'
-  const text = 'Slap Chips'
-  const tw = ctx.measureText(text).width
+  let tw = ctx.measureText(text).width
+  const room = w * 0.74
+  if (tw > room) {
+    size = Math.floor((size * room) / tw)
+    ctx.font = `700 ${size}px ${GAME_FONT}`
+    tw = ctx.measureText(text).width
+  }
   ctx.lineWidth = size * 0.2
   ctx.strokeStyle = '#120720'
   ctx.strokeText(text, w / 2, h * 0.53)
@@ -107,9 +113,9 @@ function drawAtlas(canvas, phase) {
   ctx.fillStyle = phase ? '#ffffff' : '#ffe84d'
   ctx.fillText('★', w / 2 + tw / 2 + size * 0.55, h * 0.5)
 
-  // ---- Pillar plaques: a slap and a chip ----
+  // ---- Pillar plaques: a laugh and the alphabet ----
   const py = BOARD_PX + 8
-  ;['🖐️', '🥔'].forEach((icon, k) => {
+  ;['🤣', '🔤'].forEach((icon, k) => {
     const px = 8 + k * (PLAQUE_PX + 16)
     roundRect(ctx, px, py, PLAQUE_PX, PLAQUE_PX, 16)
     ctx.fillStyle = k ? '#ffd92e' : '#ff5a5a'

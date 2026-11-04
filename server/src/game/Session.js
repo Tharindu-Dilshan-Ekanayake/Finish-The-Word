@@ -1,4 +1,5 @@
 const DATA = require('./data')
+const { eggById, petById, rollPet } = require('./pets')
 const profiles = require('./profiles')
 
 const HALF = DATA.world.half
@@ -79,6 +80,7 @@ class Session {
     player.uname = identity.username
     player.streak = this.profile.streak
     player.halo = this.profile.equippedHalo || ''
+    player.pet = this.profile.equippedPet || ''
     player.level = this.profile.level
     player.title = this.profile.equippedTitle || ''
     player.x = DATA.world.spawn[0]
@@ -142,10 +144,14 @@ class Session {
         return this.onSit(msg, now)
       case 'leave':
         return this.seat?.table.leave(this, now)
-      case 'hide':
-        return this.seat?.table.hide(this, msg.cells, now)
-      case 'eat':
-        return this.seat?.table.eat(this, msg.cell, now)
+      case 'word':
+        return this.seat?.table.word(this, msg.text, now)
+      case 'typing':
+        return this.seat?.table.typing(this, msg.n, now)
+      case 'hint':
+        return this.seat?.table.hint(this, now)
+      case 'bot':
+        return this.seat?.table.callBot(this, now)
       case 'emote':
         return this.onEmote(msg, now)
       case 'buy':
@@ -256,6 +262,10 @@ class Session {
       if (!this.spend(pass.price)) return
       p.passes.push(pass.id)
       this.toast(`${pass.name} unlocked! ${pass.icon}`)
+    } else if (msg.kind === 'egg') {
+      const egg = eggById(msg.id)
+      if (!egg || !this.spend(egg.price)) return
+      this.hatch(egg, now)
     } else if (msg.kind === 'starter') {
       if (p.starterPack) return
       const pack = DATA.starterPack
@@ -272,7 +282,41 @@ class Session {
     this.seat?.table.sync(now)
   }
 
+  /**
+   * Opens a paid-for egg. A pet already owned pays back DATA.petDupRefund of the
+   * egg's price instead. The first pet is equipped straight away. The client plays
+   * the hatching from the 'hatch' message.
+   */
+  hatch(egg, now) {
+    const p = this.profile
+    const petId = rollPet(egg)
+    const dup = p.ownedPets.includes(petId)
+    const refund = dup ? Math.round(egg.price * DATA.petDupRefund) : 0
+    if (dup) p.cash += refund
+    else p.ownedPets.push(petId)
+    if (!p.equippedPet) {
+      p.equippedPet = petId
+      this.player.pet = petId
+    }
+    profiles.addQuestEvent(p, 'hatch', 1, now)
+    const pet = petById(petId)
+    if (!dup && ['legendary', 'mythic'].includes(pet.rarity)) {
+      this.room.broadcast('toast', { text: `${pet.icon} ${this.player.name} hatched a ${pet.rarity.toUpperCase()} ${pet.name}!` })
+    }
+    this.send('hatch', { egg: egg.id, pet: petId, dup, refund })
+  }
+
   onEquip(msg, now) {
+    if (msg.kind === 'pet') {
+      // Equipping the pet you already have out puts it away.
+      const p = this.profile
+      if (msg.id && !p.ownedPets.includes(msg.id)) return
+      p.equippedPet = msg.id && p.equippedPet !== msg.id ? msg.id : ''
+      this.player.pet = p.equippedPet
+      profiles.markDirty(p)
+      this.pushProfile(now)
+      return
+    }
     if (msg.kind === 'title') {
       // Equipping the title you already wear takes it off.
       const p = this.profile

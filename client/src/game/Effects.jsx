@@ -7,7 +7,7 @@ import { useDisposable } from './useDisposable'
 
 /**
  * Pooled particle effects: confetti over a duel's winner, and little stars where a
- * slap lands (or a golden chip is found). Fixed-size pools, preallocated typed
+ * big word is played (or a pet's shield saves a heart). Fixed-size pools, preallocated typed
  * arrays, one instanced draw call per effect; nothing is allocated per frame or per
  * spawn.
  *
@@ -15,7 +15,7 @@ import { useDisposable } from './useDisposable'
  */
 
 const CONFETTI = 160
-/** Impact stars from a slap (and a golden chip's glitter). */
+/** Glitter bursting off a player's head: a big word, a shield. */
 const SPARKS = 48
 const GRAVITY = 9
 

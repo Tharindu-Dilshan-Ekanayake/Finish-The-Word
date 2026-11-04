@@ -5,7 +5,7 @@ import { boxityEnv } from '../bloxity/env'
 import { loadEmoteCatalog, onPlatformEvent, platform } from '../bloxity/platform'
 import { DATA, SEATED_BACK, seatPosition, SPAWN } from '../game/layout'
 import { getSettings } from '../game/quality'
-import { SLAP_IMPACT_MS, SLAPPING_MS } from '../game/seatPose'
+import { FAINT_DELAY_MS, LAUGH_MS } from '../game/seatPose'
 import { useGame } from './gameStore'
 import {
   actionFx,
@@ -40,14 +40,12 @@ const ROOM_NAME = DATA.bloxity.roomName
 const HOSTING_ID = import.meta.env.VITE_BLOXITY_HOSTING_ID || ''
 const POS_INTERVAL_MS = 100
 const HEARTBEAT_MS = 1000
-/** How long a bite's outcome (crunch / SLAP) stays on screen. */
-const REVEAL_HOLD_MS = 1700
+/** How long a word's (or a timeout's) callout stays on screen. */
+const CALLOUT_MS = 1700
 /** Roughly where a seated player's head is. */
 const SEATED_HEAD_Y = 1.3
-/** A knockout's result waits for the slap to land and the loser to fly out of their chair. */
-const RESULT_AFTER_SLAP_MS = SLAP_IMPACT_MS + 900
-/** How far back from the table (against sideways 1) a knocked-out player flies. */
-const FLY_BACK = 0.45
+/** A knockout's result waits for the loser to faint off their chair. */
+const RESULT_AFTER_FAINT_MS = FAINT_DELAY_MS + 1000
 /** How long the "YOUR TURN!" splash stays up. */
 const TURN_SPLASH_MS = 1300
 /** A cold start can take ~45 s; stop retrying after this long without a room. */
@@ -247,7 +245,16 @@ function resetWorld() {
   actionFx.clear()
   localPlayer.seat = null
   localPlayer.emote = null
-  useGame.setState({ players: {}, tables: {}, match: null, draft: [], reveal: null })
+  useGame.setState({
+    players: {},
+    tables: {},
+    match: null,
+    wordError: null,
+    oppTyping: null,
+    callout: null,
+    hint: null,
+    freshWords: [],
+  })
 }
 
 /** Wires a freshly joined room's state callbacks and messages into the client. */
@@ -265,6 +272,7 @@ function attach(r) {
     cb.listen(player, 'streak', () => setPlayerMeta(id, player), false)
     cb.listen(player, 'avatar', () => setPlayerMeta(id, player), false)
     cb.listen(player, 'halo', () => setPlayerMeta(id, player), false)
+    cb.listen(player, 'pet', () => setPlayerMeta(id, player), false)
     cb.listen(player, 'level', () => setPlayerMeta(id, player), false)
     cb.listen(player, 'title', () => setPlayerMeta(id, player), false)
     if (id === r.sessionId) return
@@ -408,6 +416,7 @@ function setPlayerMeta(id, player) {
         level: player.level,
         title: player.title,
         halo: player.halo,
+        pet: player.pet,
         equipped,
         proportions,
       },
@@ -454,11 +463,11 @@ function applyTable(id, t) {
     turn: t.turn || null,
     winner: t.winner || null,
     endsAt: t.endsAt ? t.endsAt - clockOffset : 0,
-    /** Each seat's plate ('0' uneaten, '1' eaten, '2' slap found, '3' golden eaten). */
-    plates: [t.plate0 || '', t.plate1 || ''],
+    /** The letter the next word must start with, the latest word and the chain's length. */
+    letter: t.letter || '',
+    last: t.last || '',
+    count: t.count || 0,
     hearts: [t.hearts0, t.hearts1],
-    /** Where each seat hid its slaps (base-36 cells), once the duel has ended. */
-    shown: [t.shown0 || '', t.shown1 || ''],
   }
   indexSeats(table)
   useGame.setState((s) => ({ tables: { ...s.tables, [id]: table } }))
@@ -500,55 +509,45 @@ function headOf(seat) {
 function playToastSound(text) {
   if (/not enough|need \$|busy|full|walk closer|already|too slow|out of time|nothing left/i.test(text)) sfx.error()
   else if (/bought|unlocked|claimed/i.test(text)) sfx.buy()
-  else if (/quest complete|gift|reward|streak/i.test(text)) sfx.reward()
+  else if (/quest complete|gift|reward|streak|word book|collected|hatched/i.test(text)) sfx.reward()
 }
 
 /** actionFx is keyed by session id, except the local player's entry. */
 const fxKey = (id) => (id === useGame.getState().selfId ? SELF_ANCHOR : id)
 
 /**
- * A slap anywhere in the room: the plate's owner leans over and slaps the eater
- * with their own hand (see seatPose); when it lands, the eater is knocked aside,
- * stars burst off their cheek and, if it was you, the screen edges flush red.
+ * Someone ran out of time (anywhere in the room): the player beside them leans
+ * back laughing and points at them, while they slump with their face in their
+ * hands (see seatPose). `final`: their last heart, so they faint off the chair.
+ * The two players at that table hear it; if it was you, the screen edges flush red.
  */
-function playSlap(id, by, now, final = false) {
+function playLaugh(id, by, now, final = false) {
   const seat = seatOf(id)
   if (!seat) return
   const other = by ? seatOf(by) : null
-  // From the slapped player towards the slapper (the other seat at the table).
-  let dx = other ? other.x - seat.x : Math.cos(seat.ry)
-  let dz = other ? other.z - seat.z : -Math.sin(seat.ry)
-  const len = Math.hypot(dx, dz) || 1
-  dx /= len
-  dz /= len
-  // Is the slapper on the slapped player's right? Then the hit knocks them left,
-  // and the slapper (who faces the same way) reaches over with their left hand.
-  const right = -Math.cos(seat.ry) * dx + Math.sin(seat.ry) * dz > 0
   if (other) {
+    // From the laugher towards the one laughed at.
+    let dx = seat.x - other.x
+    let dz = seat.z - other.z
+    const len = Math.hypot(dx, dz) || 1
+    dx /= len
+    dz /= len
+    // Point with the hand on their side: is the target on the laugher's right?
+    const right = -Math.cos(other.ry) * dx + Math.sin(other.ry) * dz > 0
     const key = fxKey(by)
-    actionFx.set(key, { ...actionFx.get(key), slapping: now, dx: -dx, dz: -dz, arm: right ? -1 : 1 })
+    actionFx.set(key, { ...actionFx.get(key), laughing: now, dx, dz, arm: right ? 1 : -1 })
   }
   const key = fxKey(id)
-  const hit = { slap: now + SLAP_IMPACT_MS, side: right ? -1 : 1 }
-  if (final) {
-    // The last slap knocks them out of the chair: away from the slapper, a little
-    // back from the table.
-    let ax = -dx - Math.sin(seat.ry) * FLY_BACK
-    let az = -dz - Math.cos(seat.ry) * FLY_BACK
-    const n = Math.hypot(ax, az) || 1
-    ax /= n
-    az /= n
-    Object.assign(hit, { fly: now + SLAP_IMPACT_MS, ax, az })
-  }
-  actionFx.set(key, { ...actionFx.get(key), ...hit })
+  actionFx.set(key, { ...actionFx.get(key), shame: now, ...(final ? { faint: now + FAINT_DELAY_MS } : {}) })
 
-  setTimeout(() => {
-    if (!getSettings().particles) return
-    const head = headOf(seat)
-    effectQueue.push({ kind: 'sparks', x: head.x + dx * 0.25, y: head.y, z: head.z + dz * 0.25 })
-  }, SLAP_IMPACT_MS)
-  if (id === useGame.getState().selfId) {
-    useGame.setState({ flash: { kind: 'slap', at: now, delay: SLAP_IMPACT_MS, until: now + SLAP_IMPACT_MS + 800 } })
+  const { selfId } = useGame.getState()
+  if (id === selfId || by === selfId) {
+    sfx.laugh()
+    if (final) sfx.faint()
+  }
+  if (id === selfId) {
+    sfx.oops()
+    useGame.setState({ flash: { kind: 'fail', at: now, delay: 0, until: now + 800 } })
   }
 }
 
@@ -572,29 +571,32 @@ const handlers = {
     localPlayer.seat = next ? { ...seatPosition(next.table, next.seat), dancing: Boolean(next.won) } : null
 
     let turnSplash = useGame.getState().turnSplash
+    const turnStarted = Boolean(next?.myTurn && !prev?.myTurn)
     if (next && prev) {
-      if (next.phase === 'hiding' && prev.phase !== 'hiding') sfx.go()
-      // Your turn: a chime and the big "YOUR TURN!" splash, just as the last bite's
-      // reveal card clears (it is your turn from then on).
-      if (next.myTurn && !prev.myTurn) {
-        const now = Date.now()
-        const { reveal } = useGame.getState()
-        const at = reveal && reveal.until > now ? reveal.until : now
-        setTimeout(() => sfx.turn(), at - now)
-        turnSplash = { at, until: at + TURN_SPLASH_MS }
+      if (next.phase === 'playing' && prev.phase !== 'playing') sfx.go()
+      if (turnStarted) {
+        sfx.turn()
+        // The big "YOUR TURN!" splash only when a chain starts (the first turn, or a
+        // fresh letter after a laugh): mid-chain it would just be in the way.
+        if (prev.phase !== 'playing' || prev.pending) {
+          const now = Date.now()
+          turnSplash = { at: now, until: now + TURN_SPLASH_MS }
+        }
       }
     }
     if (!next?.myTurn) turnSplash = null
     // Standing up leaves the duel behind (a knockout's flight included).
     if (!next) actionFx.delete(SELF_ANCHOR)
-    // A fresh hiding phase (or leaving the table) starts with no chips picked.
-    const freshHide = next?.phase === 'hiding' && prev?.phase !== 'hiding'
     useGame.setState({
       match: next,
       turnSplash,
-      ...(freshHide || !next ? { draft: [], reveal: null } : {}),
+      // A new turn (or leaving) clears the last refusal, the hint and the opponent's typing dots.
+      ...(turnStarted || !next?.myTurn ? { wordError: null, hint: null } : {}),
+      ...(!next?.theirTurn ? { oppTyping: null } : {}),
+      // A new duel (or leaving) starts with no NEW tags in the chain.
+      ...(!next || (next.phase === 'countdown' && prev?.phase !== 'countdown') ? { callout: null, freshWords: [] } : {}),
       // The quit popup only makes sense mid-duel.
-      ...(next?.phase !== 'eating' ? { quitAsk: false } : {}),
+      ...(next?.phase !== 'playing' ? { quitAsk: false } : {}),
     })
   },
 
@@ -610,38 +612,63 @@ const handlers = {
     useGame.setState({ profile: withProfileDeadlines(msg.profile) })
   },
 
-  /** A bite at your table (drumroll), then what was in the chip, for the reveal card. */
+  /** Your duel: a word accepted, a turn timed out, or your opponent typing. */
   duel(msg) {
     const now = Date.now()
-    if (msg.t === 'bite') {
-      sfx.drum()
-      useGame.setState({ reveal: { mine: msg.mine, cell: msg.cell, kind: null, hearts: null, until: now + 5000 } })
-    } else if (msg.t === 'outcome') {
-      if (msg.kind === 'safe') sfx.crunch()
-      else if (msg.kind === 'slap') sfx.slap()
-      else if (msg.kind === 'golden') sfx.golden()
-      const reveal = { mine: msg.mine, cell: msg.cell, kind: msg.kind, hearts: msg.hearts, until: now + REVEAL_HOLD_MS }
-      useGame.setState(
-        msg.kind === 'golden' && msg.mine
-          ? { reveal, flash: { kind: 'golden', at: now, delay: 0, until: now + 900 } }
-          : { reveal },
-      )
+    if (msg.t === 'typing') {
+      useGame.setState({ oppTyping: { n: msg.n, at: now } })
+    } else if (msg.t === 'word') {
+      const lucky = msg.mine && msg.lucky
+      if (msg.bonus || lucky) sfx.golden()
+      else sfx.word()
+      const callout = {
+        kind: 'word',
+        mine: msg.mine,
+        word: msg.word,
+        bonus: msg.bonus,
+        lucky,
+        until: now + CALLOUT_MS,
+      }
+      const { freshWords } = useGame.getState()
+      useGame.setState({
+        callout,
+        ...(msg.mine && msg.fresh ? { freshWords: [...freshWords, msg.word] } : {}),
+        ...((msg.bonus || lucky) && msg.mine ? { flash: { kind: 'golden', at: now, delay: 0, until: now + 900 } } : {}),
+      })
+    } else if (msg.t === 'timeout') {
+      // The laugh and its sounds come with the room-wide 'fx' (see playLaugh).
+      useGame.setState({ callout: { kind: 'timeout', mine: msg.mine, hearts: msg.hearts, until: now + CALLOUT_MS } })
+    } else if (msg.t === 'shield') {
+      sfx.golden()
+      useGame.setState({ callout: { kind: 'shield', mine: msg.mine, hearts: msg.hearts, until: now + CALLOUT_MS } })
     }
   },
 
+  /** Your pet's hint for this turn. */
+  hint(msg) {
+    sfx.reward()
+    useGame.setState({ hint: { word: String(msg.word || '') } })
+  },
+
+  /** An egg you bought: the hatching screen takes it from here. */
+  hatch(msg) {
+    useGame.setState({ hatching: { ...msg, at: Date.now() } })
+  },
+
+  /** The server refused your word: say why, under the input. */
+  wordError(msg) {
+    sfx.error()
+    useGame.setState({ wordError: { reason: String(msg.reason || 'Try another word'), at: Date.now() } })
+  },
+
   /**
-   * Table actions anywhere in the room, so every duel looks alive from the plaza:
-   * a bite (hand to mouth), a slap (the owner slaps the eater) or a golden chip.
+   * Table actions anywhere in the room, so every duel looks alive from the
+   * boardwalk: a laugh (someone was too slow!) or a long word's sparkle.
    */
   fx(msg) {
     const now = Date.now()
-    const key = fxKey(msg.id)
-    if (msg.kind === 'eat') {
-      actionFx.set(key, { ...actionFx.get(key), eat: now })
-      return
-    }
-    if (msg.kind === 'slap') {
-      playSlap(msg.id, msg.by, now, Boolean(msg.final))
+    if (msg.kind === 'laugh') {
+      playLaugh(msg.id, msg.by, now, Boolean(msg.final))
       return
     }
     if (msg.kind === 'golden' && getSettings().particles) {
@@ -682,25 +709,24 @@ const handlers = {
   },
 
   result(msg) {
-    // The winner dances only once every slap has landed: the knockout slap that
-    // just started, or the slaps a quitter is about to get.
+    // The winner dances only once they've finished laughing: at the knockout that
+    // just happened, or at a quitter, a few times over.
     if (msg.winner) {
       const p = msg.punish
-      const slapsFor = p ? (p.first + (p.count - 1) * p.gap) * 1000 : msg.reason === 'slapped' ? 0 : -1
-      if (slapsFor >= 0) {
+      const laughsFor = p ? (p.first + (p.count - 1) * p.gap) * 1000 : msg.reason === 'knockout' ? 0 : -1
+      if (laughsFor >= 0) {
         const key = fxKey(msg.winner)
-        actionFx.set(key, { ...actionFx.get(key), danceAt: Date.now() + slapsFor + SLAPPING_MS + 300 })
+        actionFx.set(key, { ...actionFx.get(key), danceAt: Date.now() + laughsFor + LAUGH_MS })
       }
     }
-    // A knockout's banner waits for the slap to land.
-    const delay = msg.reason === 'slapped' ? RESULT_AFTER_SLAP_MS : 0
-    const mySeat = useGame.getState().match?.seat ?? 0
-    setTimeout(() => showResult(msg, mySeat), delay)
+    // A knockout's banner waits for the loser to faint.
+    const delay = msg.reason === 'knockout' ? RESULT_AFTER_FAINT_MS : 0
+    setTimeout(() => showResult(msg), delay)
   },
 }
 
 /** The duel result: confetti over the winner, and your banner if it was your duel. */
-function showResult(msg, mySeat) {
+function showResult(msg) {
   const { selfId } = useGame.getState()
   const now = Date.now()
 
@@ -720,9 +746,11 @@ function showResult(msg, mySeat) {
         reward: win ? msg.reward : msg.consolation || 0,
         /** What a quitter paid (the winner's reward already includes it). */
         penalty: msg.penalty || 0,
-        theirSlaps: msg.slaps[1 - mySeat] || [],
+        words: msg.words || 0,
+        longest: msg.longest || '',
+        practice: Boolean(msg.practice),
         reason: msg.reason,
-        // A quitter's banner stays up through their slaps (and out of their way).
+        // A quitter's banner stays up through the laughs (and out of their way).
         punished: Boolean(msg.punish),
         until: now + (msg.punish ? 5200 : 4200),
       },

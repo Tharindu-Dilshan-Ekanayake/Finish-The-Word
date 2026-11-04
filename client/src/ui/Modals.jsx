@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 
 import { sfx } from '../audio/sfx'
-import { DATA, RARITY_COLORS } from '../game/layout'
+import { DATA, petById, petPerks, RARITY_COLORS } from '../game/layout'
 import { usePlatform } from '../bloxity/platform'
 import { useQuality } from '../game/quality'
 import { GRAPHICS, setCameraSpeed, setGraphics, setMusicVolume, setShowFps, setVolume } from '../game/userSettings'
@@ -280,7 +280,76 @@ function PassRows({ profile }) {
   )
 }
 
+/** A pet's emoji on a tile in its rarity colour. */
+function PetIcon({ pet, size = 'size-12 text-[1.9rem]' }) {
+  return (
+    <span
+      className={`flex shrink-0 items-center justify-center rounded-lg border-[3px] border-black bg-[#1d2433] ${size}`}
+      style={{ boxShadow: `inset 0 0 0 3px ${RARITY_COLORS[pet.rarity]}` }}
+    >
+      {pet.icon}
+    </span>
+  )
+}
+
+const equipPet = (id) => {
+  sfx.click()
+  send({ t: 'equip', kind: 'pet', id })
+}
+
+/** One pet: what it does, and equip / put away (or the chance to hatch it). */
+function PetRow({ pet, profile, chance }) {
+  const owned = profile.ownedPets?.includes(pet.id)
+  const out = profile.equippedPet === pet.id
+  let action
+  if (out) action = <ActionButton label="PUT AWAY" variant="owned" onClick={() => equipPet(pet.id)} />
+  else if (owned) action = <ActionButton label="EQUIP" variant="equip" onClick={() => equipPet(pet.id)} />
+  else action = <ActionButton label={chance} variant="owned" disabled />
+  return (
+    <Row
+      icon={<PetIcon pet={pet} />}
+      title={pet.name}
+      rarity={pet.rarity}
+      sub={petPerks(pet).join(' · ')}
+      action={action}
+    />
+  )
+}
+
+/** Eggs to buy, each followed by the pets it can hatch and their chances. */
+function PetShopRows({ profile }) {
+  return (
+    <>
+      <p className="stroke-thin -mt-1 text-center text-sm font-bold text-white/90">
+        Pets follow you around and give you powers in every duel! 🐾
+      </p>
+      {DATA.eggs.map((egg) => {
+        const total = egg.odds.reduce((s, [, w]) => s + w, 0)
+        return (
+          <div key={egg.id} className="flex flex-col gap-2">
+            <Row
+              icon={
+                <span
+                  className="egg-swatch block h-14 w-11 shrink-0 border-[3px] border-black"
+                  style={{ background: `radial-gradient(circle at 35% 30%, #fff8 0 14%, transparent 15%), ${egg.color}` }}
+                />
+              }
+              title={egg.name}
+              sub={`Hatch 1 of ${egg.odds.length} pets · doubles pay back ${Math.round(DATA.petDupRefund * 100)}%`}
+              action={<ActionButton label={money(egg.price)} onClick={() => buy('egg', egg.id)} />}
+            />
+            {egg.odds.map(([id, weight]) => (
+              <PetRow key={id} pet={petById(id)} profile={profile} chance={`${Math.round((weight / total) * 100)}%`} />
+            ))}
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 const SHOP_TABS = [
+  ['pets', 'Pets 🐾'],
   ['chairs', 'Chairs 🪑'],
   ['auras', 'Auras ✨'],
   ['titles', 'Titles 🏷️'],
@@ -292,7 +361,7 @@ function ShopModal({ profile }) {
   const tab = useGame((s) => s.shopTab)
   const setTab = useGame((s) => s.setShopTab)
   const tabs = (
-    <div className="mb-2 grid grid-cols-5 gap-1.5">
+    <div className="mb-2 grid grid-cols-6 gap-1">
       {SHOP_TABS.map(([id, label]) => (
         <button
           key={id}
@@ -301,7 +370,7 @@ function ShopModal({ profile }) {
             sfx.click()
             setTab(id)
           }}
-          className={`press btn-3d whitespace-nowrap px-0.5 py-1.5 text-[0.75rem] font-bold text-white ${
+          className={`press btn-3d whitespace-nowrap px-0.5 py-1.5 text-[0.68rem] font-bold text-white ${
             tab === id ? 'bg-[#ff7a1f]' : 'bg-[#2d6b78]'
           }`}
         >
@@ -311,7 +380,8 @@ function ShopModal({ profile }) {
     </div>
   )
   return (
-    <Frame title={tab === 'emotes' ? 'Emote Shop 😡🥳' : 'Shop 🧺'} tabs={tabs}>
+    <Frame title={tab === 'emotes' ? 'Emote Shop 😡🥳' : tab === 'pets' ? 'Pet Eggs 🥚' : 'Shop 🧺'} tabs={tabs}>
+      {tab === 'pets' && <PetShopRows profile={profile} />}
       {tab === 'chairs' && <ChairRows profile={profile} />}
       {tab === 'auras' && <HaloRows profile={profile} />}
       {tab === 'titles' && <TitleRows profile={profile} />}
@@ -324,7 +394,18 @@ function ShopModal({ profile }) {
 function ItemsModal({ profile }) {
   return (
     <Frame title="Items 🎒">
-      <h3 className="stroke-text text-xl font-bold text-white">Chairs</h3>
+      <h3 className="stroke-text text-xl font-bold text-white">Pets</h3>
+      {(profile.ownedPets || []).length > 0 ? (
+        profile.ownedPets.map((id) => petById(id) && <PetRow key={id} pet={petById(id)} profile={profile} />)
+      ) : (
+        <Row
+          icon={<span className="text-[2.4rem]">🥚</span>}
+          title="No pets yet"
+          sub="Hatch one at the egg stand!"
+          action={<ActionButton label="EGGS" variant="equip" onClick={() => useGame.getState().openModal('shop', 'pets')} />}
+        />
+      )}
+      <h3 className="stroke-text mt-2 text-xl font-bold text-white">Chairs</h3>
       <ChairRows profile={profile} ownedOnly />
       {(profile.ownedHalos || []).length > 0 && (
         <>
@@ -383,6 +464,25 @@ function RewardsModal({ profile }) {
           ) : (
             <ActionButton label={clock(profile.giftAt - now)} variant="owned" disabled />
           )
+        }
+      />
+      <Row
+        icon={<span className="text-[2.4rem]">📚</span>}
+        title={`Word Book · ${profile.words}`}
+        sub={
+          profile.nextMilestone
+            ? `${profile.nextMilestone.at} words pays +${money(profile.nextMilestone.cash)}`
+            : 'Every milestone collected!'
+        }
+        action={
+          <ActionButton
+            label="OPEN"
+            variant="equip"
+            onClick={() => {
+              sfx.click()
+              useGame.getState().openModal('wordbook')
+            }}
+          />
         }
       />
       <Row
@@ -546,21 +646,84 @@ function QuestsModal({ profile }) {
 
 const HELP_STEPS = [
   ['🚶', 'Walk to a table', 'Use WASD (or the joystick on phones). Walk up to a table and press E (or tap "Play").'],
-  ['🤫', 'Hide your slaps', `When a second player sits down, you each hide ${DATA.chips.slaps} slaps in the chips on your own plate. Keep them secret!`],
-  ['😋', 'Take turns eating', "On your turn, pick a chip from your opponent's plate and eat it. A safe chip goes CRUNCH."],
-  ['🖐️', "Don't get slapped", `Bite into a hidden slap and your opponent slaps you: you lose a heart. Bite all ${DATA.chips.slaps} of their slaps and you're OUT!`],
-  ['🏆', 'Win the duel', `The first player to bite all ${DATA.chips.slaps} slaps loses. The other wins $${DATA.winReward}. Even if you lose, you get $${DATA.lossReward} and XP for playing.`],
-  ['🏃', 'No quitting!', `Quit a duel and you lose $${DATA.forfeit.penalty} to your opponent, and they slap you ${DATA.forfeit.slaps} times before you go.`],
-  ['✨', 'Golden chip', `One safe chip on every plate is secretly golden: eat it for a $${DATA.chips.goldenCash} bonus.`],  ['⭐', 'Level up', 'Every duel gives XP. Each new level pays cash, and some unlock cool titles for your name.'],
+  ['🔤', 'Keep the chain alive', 'Take turns saying a word that starts with the LAST letter of the word before it. POODLE → ELEPHANT → TURTLE!'],
+  ['📏', 'The rules', `Real English words only, at least ${DATA.words.minLength} letters, and no word twice in a duel. Type it and press SEND (or Enter).`],
+  ['⚡', 'Think fast', 'Your clock gets shorter with every word in the chain. The longer it goes, the harder it gets!'],
+  ['🤣', "Don't get laughed at", `Run out of time and your opponent laughs at you: you lose a heart and they start a new chain. Lose all ${DATA.words.hearts} hearts and you faint: KNOCKED OUT!`],
+  ['🏆', 'Win the duel', `Knock your opponent out to win $${DATA.winReward}. Even if you lose, you get $${DATA.lossReward} and XP for playing.`],
+  ['🏃', 'No quitting!', `Quit a duel and you lose $${DATA.forfeit.penalty} to your opponent, and they laugh you right out of your chair.`],
+  ['✨', 'Big words', `Play a word with ${DATA.words.bonusLength} or more letters for a $${DATA.words.bonusCash} bonus.`],
+  ['🤖', 'Nobody to play?', `Sit at a table anyway: anyone else waiting is brought to you. Or tap "Play ${DATA.bot.name}" to practise against the bot (only if you want to). Practice duels pay half cash.`],
+  ['🐾', 'Hatch pets', 'Buy eggs at the egg stand. Pets follow you and give you powers in every duel: extra seconds, word hints and shields that save a heart!'],
+  ['📚', 'Fill your Word Book', 'Every new word you play goes in your Word Book. Collect 10, 25, 50, 100… words for big cash rewards.'],
+  ['⭐', 'Lucky letter', `Every day has a lucky letter. End a word with it for +$${DATA.lucky.cash}!`],
+  ['🆙', 'Level up', 'Every duel gives XP. Each new level pays cash, and some unlock cool titles for your name.'],
   ['📜', 'Quests & gifts', 'Finish 3 daily quests, open a free gift every 10 minutes, and claim your daily reward.'],
   ['🛍️', 'Spend your cash', 'Buy chairs and thrones, glowing auras, titles and emotes in the Shop. Show them off!'],
   ['🔥', 'Win streaks', 'Win in a row for bonus cash at 3, 5 and 10 wins. Get on the leaderboards!'],
 ]
 
+/**
+ * The Word Book: every different word you've played. Milestones pay cash on the
+ * spot (the server does it); this shows how far along you are.
+ */
+function WordBookModal({ profile }) {
+  const next = profile.nextMilestone
+  const milestones = DATA.wordBook.milestones
+  const prevAt = [...milestones].reverse().find((m) => m.at <= profile.words)?.at ?? 0
+  const pct = next ? Math.min(100, ((profile.words - prevAt) / (next.at - prevAt)) * 100) : 100
+  return (
+    <Frame title="Word Book 📚">
+      <div className="flex flex-col items-center gap-1 rounded-xl border-[3px] border-black/50 bg-[#123540] px-3 py-2">
+        <div className="stroke-text text-[2.6rem] font-bold leading-none text-[#ffe23d]">{profile.words}</div>
+        <div className="stroke-thin text-sm font-bold text-white">different words played</div>
+        <div className="mt-1 h-3.5 w-full overflow-hidden rounded-full border-2 border-black/50 bg-black/30">
+          <div className="h-full rounded-full bg-gradient-to-r from-[#fff35c] to-[#ffb21e]" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="stroke-thin text-sm font-bold text-white/90">
+          {next ? `${next.at - profile.words} more for +${money(next.cash)}` : 'Every milestone collected! 🏆'}
+        </div>
+      </div>
+      <div className="stroke-thin rounded-xl border-[3px] border-black/50 bg-[#5a4300] px-3 py-1.5 text-center text-sm font-bold text-white">
+        ⭐ Today&apos;s lucky letter: <span className="text-[#ffe23d]">{profile.lucky.toUpperCase()}</span> · end a word with it for +
+        {money(DATA.lucky.cash)}
+      </div>
+      <div className="grid grid-cols-3 gap-1.5">
+        {milestones.map((m) => {
+          const done = profile.words >= m.at
+          return (
+            <div
+              key={m.at}
+              className={`stroke-thin rounded-lg border-2 border-black/50 px-1 py-1 text-center text-xs font-bold text-white ${
+                done ? 'bg-[#1f8f3e]' : 'bg-[#2d3a44]'
+              }`}
+            >
+              {done ? '✅' : '🔒'} {m.at} words
+              <div className="text-[#fff35c]">+{money(m.cash)}</div>
+            </div>
+          )
+        })}
+      </div>
+      {profile.recentWords.length > 0 && (
+        <>
+          <h3 className="stroke-text text-lg font-bold text-white">Latest words</h3>
+          <div className="flex flex-wrap gap-1.5">
+            {profile.recentWords.map((w) => (
+              <span key={w} className="stroke-thin rounded-lg border-2 border-black/50 bg-[#2a6bff] px-1.5 py-0.5 text-sm font-bold text-white">
+                {w.toUpperCase()}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </Frame>
+  )
+}
+
 /** "How to play" in plain English. Opens by itself on a player's first visit. */
 function HelpModal() {
   return (
-    <Frame title="How to Play 🖐️">
+    <Frame title="How to Play 🔤">
       {HELP_STEPS.map(([icon, title, text], i) => (
         <div key={title} className="flex items-start gap-3 rounded-xl border-[3px] border-black/50 bg-[#123540] px-3 py-2">
           <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-white/10 text-[1.8rem]">{icon}</span>
@@ -596,6 +759,7 @@ export default function Modals() {
   if (modal === 'rewards') return <RewardsModal profile={profile} />
   if (modal === 'settings') return <SettingsModal />
   if (modal === 'quests') return <QuestsModal profile={profile} />
+  if (modal === 'wordbook') return <WordBookModal profile={profile} />
   if (modal === 'help') return <HelpModal />
   return null
 }

@@ -4,11 +4,13 @@ import {
   BoxGeometry,
   CanvasTexture,
   Color,
+  LatheGeometry,
   MeshBasicMaterial,
   Object3D,
   MeshLambertMaterial,
   RepeatWrapping,
   SRGBColorSpace,
+  Vector2,
 } from 'three'
 
 import { useGame } from '../net/gameStore'
@@ -24,7 +26,19 @@ import {
   createThroneGeometry,
   cushionColor,
 } from './furniture'
-import { CHAIR_SHOP, EMOTE_SHOP, RARITY_AURA, RARITY_COLORS, SHOP_CHAIRS } from './layout'
+import {
+  CHAIR_SHOP,
+  DATA,
+  EGG_SPOTS,
+  EGG_STAND,
+  EMOTE_SHOP,
+  RARITY_AURA,
+  RARITY_COLORS,
+  rotateXZ,
+  SHOP_CHAIRS,
+  SHOP_FACING,
+} from './layout'
+import { EGG_PEDESTAL_Y } from './lobby'
 import { useSettings } from './quality'
 import { useDisposable } from './useDisposable'
 
@@ -137,6 +151,55 @@ function DisplayChairs() {
   )
 }
 
+/** World [x, z] of each egg on the stand. */
+const EGG_AT = EGG_SPOTS.map(([lx, lz]) => {
+  const [dx, dz] = rotateXZ(lx, lz, EGG_STAND.ry)
+  return [EGG_STAND.x + dx, EGG_STAND.z + dz]
+})
+const EGG_SIZE = 0.62
+
+/** An egg: a lathe, wider low down, ~1 tall at scale 1. */
+function createEggGeometry() {
+  const points = []
+  for (let i = 0; i <= 12; i += 1) {
+    const a = (i / 12) * Math.PI
+    // Narrower at the top than at the bottom.
+    const r = Math.sin(a) * (0.36 - 0.06 * Math.cos(a))
+    points.push(new Vector2(Math.max(0.001, r), 0.5 - 0.5 * Math.cos(a)))
+  }
+  return new LatheGeometry(points, 16)
+}
+
+/**
+ * The eggs on the pet stand: big, gently rocking and turning, each in its egg's
+ * colour. One draw call. Labels give the name and price.
+ */
+function DisplayEggs() {
+  const ref = useRef(null)
+  const res = useDisposable(
+    () => ({ geometry: createEggGeometry(), material: new MeshLambertMaterial({ color: '#ffffff' }) }),
+    [],
+  )
+  useLayoutEffect(() => {
+    DATA.eggs.forEach((egg, i) => ref.current.setColorAt(i, _color.set(egg.color)))
+    ref.current.instanceColor.needsUpdate = true
+  }, [])
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime
+    EGG_AT.forEach(([x, z], i) => {
+      _obj.position.set(x, EGG_PEDESTAL_Y + Math.abs(Math.sin(t * 2 + i * 1.7)) * 0.06, z)
+      // Every few seconds the egg wobbles, as if something inside wants out.
+      const wobble = Math.sin(t * 18) * Math.max(0, Math.sin(t * 0.9 + i * 2) - 0.75) * 0.6
+      _obj.rotation.set(0, t * 0.6 + i, wobble)
+      _obj.scale.set(EGG_SIZE, EGG_SIZE * 1.15, EGG_SIZE)
+      _obj.updateMatrix()
+      ref.current.setMatrixAt(i, _obj.matrix)
+    })
+    ref.current.instanceMatrix.needsUpdate = true
+  })
+  return <instancedMesh ref={ref} args={[res.geometry, res.material, DATA.eggs.length]} castShadow frustumCulled={false} />
+}
+
 const SHOP_AURAS = SHOP_CHAIRS.map((c) => ({
   x: c.shop[0],
   y: PEDESTAL_TOP,
@@ -146,9 +209,9 @@ const SHOP_AURAS = SHOP_CHAIRS.map((c) => ({
 }))
 
 /**
- * The chair shop (an arc of pedestals on the east side of the plaza, each with a turning
- * chair in a glowing rarity aura) and the emote shop stall on the west side. Walk up
- * and press E — see InteractPrompt.
+ * The chair showroom (a straight row of pedestals on the east side, each with a
+ * turning chair in a glowing rarity aura), the emote shop stall on the west side and
+ * the pet egg stand by the entrance. Walk up and press E — see InteractPrompt.
  */
 export function Shops() {
   const { shadows, particles } = useSettings()
@@ -171,17 +234,14 @@ export function Shops() {
     }
   }, [])
 
-  // Two tiers: a stone base and a slab trimmed in the chair's rarity colour, each
-  // turned to face the fountain along the shop's arc.
+  // Two tiers: a stone base and a slab trimmed in the chair's rarity colour, in a
+  // straight row facing the boardwalk.
   const pedestals = useMemo(
     () =>
-      SHOP_CHAIRS.flatMap((c) => {
-        const ry = Math.atan2(-c.shop[0], -c.shop[1])
-        return [
-          { p: [c.shop[0], 0.19, c.shop[1]], s: [2, 0.38, 2], c: '#b9bec6', ry },
-          { p: [c.shop[0], 0.44, c.shop[1]], s: [1.7, 0.12, 1.7], c: RARITY_COLORS[c.rarity], ry },
-        ]
-      }),
+      SHOP_CHAIRS.flatMap((c) => [
+        { p: [c.shop[0], 0.19, c.shop[1]], s: [2, 0.38, 2], c: '#b9bec6', ry: SHOP_FACING },
+        { p: [c.shop[0], 0.44, c.shop[1]], s: [1.7, 0.12, 1.7], c: RARITY_COLORS[c.rarity], ry: SHOP_FACING },
+      ]),
     [],
   )
 
@@ -213,6 +273,28 @@ export function Shops() {
         height={0.6}
         scale={2}
       />
+
+      <DisplayEggs />
+      <Sign
+        lines={[
+          { text: 'PET EGGS 🥚', size: 56, color: '#ff8ad8' },
+          { text: 'Pets give you duel powers!', size: 26 },
+        ]}
+        position={[EGG_STAND.x, 4.2, EGG_STAND.z]}
+        height={0.7}
+        scale={2}
+      />
+      {DATA.eggs.map((egg, i) => (
+        <Sign
+          key={egg.id}
+          lines={[
+            { text: egg.name, size: 34, color: egg.color },
+            { text: `$${egg.price.toLocaleString('en-US')}`, size: 30, color: '#5cff5c' },
+          ]}
+          position={[EGG_AT[i][0], 2.15, EGG_AT[i][1]]}
+          height={0.34}
+        />
+      ))}
     </>
   )
 }

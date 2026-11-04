@@ -58,6 +58,11 @@ function createProfile(id, name) {
     equippedTitle: '',
     passes: [],
     starterPack: false,
+    /** Pets hatched from eggs, and the one following them ('' = none). */
+    ownedPets: [],
+    equippedPet: '',
+    /** Every different word this player has ever played, oldest first (capped). */
+    wordBook: [],
     quests: { day: '', progress: {}, claimed: {} },
     daily: { lastDay: '', streak: 0 },
     /** Seconds of play banked toward the next mystery gift. */
@@ -129,6 +134,7 @@ async function loadProfile(id, name, { carriedFrom = [], now = Date.now() } = {}
       const guest = normalise(raw)
       if (guest.carriedTo || isFresh(guest)) continue
       Object.assign(p, { ...guest, id, name: p.name, carriedTo: '' })
+      books.delete(p) // its Word Book was just replaced
       guest.carriedTo = id
       profiles.set(guestKey, guest)
       dirty.add(guest)
@@ -191,6 +197,47 @@ function addPlaytime(p, seconds) {
   return minutes
 }
 
+/** profile -> Set of its Word Book, built on first use (the array is what gets saved). */
+const books = new WeakMap()
+
+function bookOf(p) {
+  let book = books.get(p)
+  if (!book) {
+    book = new Set(p.wordBook)
+    books.set(p, book)
+  }
+  return book
+}
+
+/**
+ * Writes a word into the player's Word Book. `fresh`: it wasn't there yet.
+ * Reaching a DATA.wordBook milestone pays its cash, and returns it.
+ */
+function addToWordBook(p, word) {
+  const book = bookOf(p)
+  if (book.has(word) || p.wordBook.length >= DATA.wordBook.max) return { fresh: false, milestone: null }
+  book.add(word)
+  p.wordBook.push(word)
+  const milestone = DATA.wordBook.milestones.find((m) => m.at === p.wordBook.length) || null
+  if (milestone) p.cash += milestone.cash
+  markDirty(p)
+  return { fresh: true, milestone }
+}
+
+/** A number from a string, the same on every server (for things picked per day). */
+function seedOf(text) {
+  let seed = 0
+  // 32-bit integer math: plain multiplication would lose the low bits.
+  for (let i = 0; i < text.length; i += 1) seed = (Math.imul(seed, 31) + text.charCodeAt(i)) >>> 0
+  return seed
+}
+
+/** Today's lucky letter (UTC day): end a word with it for bonus cash. */
+function luckyLetter(now) {
+  const letters = DATA.lucky.letters
+  return letters[seedOf(`lucky:${dayKey(now)}`) % letters.length]
+}
+
 /** Resets quest progress when the UTC day has rolled over. */
 function refreshQuests(p, now) {
   const today = dayKey(now)
@@ -216,10 +263,7 @@ function getProfile(id, name, now = Date.now()) {
  * a given UTC day, so there is something new to chase every day.
  */
 function todaysQuests(now) {
-  const key = dayKey(now)
-  let seed = 0
-  // 32-bit integer math: plain multiplication would lose the low bits.
-  for (let i = 0; i < key.length; i += 1) seed = (Math.imul(seed, 31) + key.charCodeAt(i)) >>> 0
+  let seed = seedOf(dayKey(now))
   const pool = [...DATA.quests]
   const picked = []
   while (picked.length < DATA.questsPerDay && pool.length) {
@@ -230,8 +274,8 @@ function todaysQuests(now) {
 }
 
 /**
- * Records a gameplay event ('play', 'win', 'flawless', 'streak3', 'crunch', 'golden',
- * 'emote').
+ * Records a gameplay event ('play', 'win', 'flawless', 'streak3', 'word', 'longword',
+ * 'lucky', 'newword', 'hatch', 'emote').
  */
 function addQuestEvent(p, event, amount = 1, now = Date.now()) {
   refreshQuests(p, now)
@@ -276,6 +320,13 @@ function view(p, { now = Date.now(), giftReadyAt = now } = {}) {
     equippedTitle: p.equippedTitle,
     passes: p.passes,
     starterPack: p.starterPack,
+    ownedPets: p.ownedPets,
+    equippedPet: p.equippedPet,
+    /** The Word Book: how many words, the latest few (newest first), the next milestone. */
+    words: p.wordBook.length,
+    recentWords: p.wordBook.slice(-DATA.wordBook.recent).reverse(),
+    nextMilestone: DATA.wordBook.milestones.find((m) => m.at > p.wordBook.length) || null,
+    lucky: luckyLetter(now),
     quests: todaysQuests(now).map((q) => ({
       ...q,
       progress: p.quests.progress[q.id] || 0,
@@ -331,6 +382,8 @@ module.exports = {
   addQuestEvent,
   addXp,
   addPlaytime,
+  addToWordBook,
+  luckyLetter,
   todaysQuests,
   dailyRewardFor,
   view,

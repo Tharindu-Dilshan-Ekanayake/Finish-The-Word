@@ -4,6 +4,7 @@ import { platform, setAdScreen, usePlatform } from './bloxity/platform'
 import { isPlayingPhase, useGame } from './net/gameStore'
 import { renderStats } from './net/liveState'
 import { useConnection } from './net/useConnection'
+import Hatch from './ui/Hatch'
 import HUD from './ui/HUD'
 import InteractPrompt from './ui/InteractPrompt'
 import LoadingScreen from './ui/LoadingScreen'
@@ -87,6 +88,7 @@ function App() {
           <Modals />
         </Suspense>
       )}
+      <Hatch />
       {!ready && <LoadingScreen />}
     </div>
   )

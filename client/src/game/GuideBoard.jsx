@@ -11,10 +11,10 @@ const TEX_W = 512
 const TEX_H = Math.round((TEX_W * GUIDE.height) / GUIDE.width)
 
 const STEPS = [
-  ['🤫', `Hide ${DATA.chips.slaps} slaps in your chips`],
-  ['😋', 'Take turns eating THEIR chips'],
-  ['🖐️', 'Bite a slap? You get SLAPPED!'],
-  ['💀', `Bite all ${DATA.chips.slaps} slaps and you're OUT`],
+  ['🔤', 'Start with their LAST letter'],
+  ['🔁', 'No repeats, real words only'],
+  ['🤣', 'Too slow? They LAUGH at you!'],
+  ['💀', `Lose ${DATA.words.hearts} hearts and you're OUT`],
 ]
 
 function drawBoard(canvas) {
@@ -55,7 +55,7 @@ function drawBoard(canvas) {
   ctx.textAlign = 'center'
   ctx.font = `700 22px ${GAME_FONT}`
   ctx.fillStyle = '#ffe36b'
-  ctx.fillText(`✨ Golden chip = +$${DATA.chips.goldenCash} bonus!`, TEX_W / 2, TEX_H - 26)
+  ctx.fillText('🐾 Hatch pets for duel powers!', TEX_W / 2, TEX_H - 26)
 }
 
 /** The "how to play" sign by the entrance: one quad, one 512 px canvas texture. */

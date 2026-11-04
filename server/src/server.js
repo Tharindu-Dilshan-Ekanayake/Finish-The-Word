@@ -14,6 +14,7 @@ const DATA = require('./game/data')
 const GameRoom = require('./game/GameRoom')
 const profiles = require('./game/profiles')
 const { recordGemGrant } = require('./game/gemGrants')
+const { loadDictionary } = require('./game/words')
 
 const PORT = Number(process.env.PORT) || 3000
 const PRODUCTION = process.env.NODE_ENV === 'production'
@@ -154,6 +155,10 @@ gameServer.define(DATA.bloxity.roomName, GameRoom)
 gameServer.onShutdown(async () => {
   await Promise.all([profiles.flushNow(), flushScores()])
 })
+
+// The dictionary is read once, before any room can open. A missing word list
+// fails the start rather than a duel.
+loadDictionary()
 
 profiles
   .init()

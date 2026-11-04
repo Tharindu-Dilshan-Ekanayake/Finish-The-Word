@@ -28,24 +28,28 @@ export const useGame = create((set, get) => ({
   /** null | 'shop' | 'items' | 'rewards' | 'quests' | 'help' | 'settings' */
   modal: null,
   shopTab: 'chairs',
-  /** Duel outcome banner for this player: { win, reward, reason, theirSlaps, until }. */
+  /** Duel outcome banner for this player: { win, reward, reason, words, longest, until }. */
   result: null,
+  /** Why the server refused your last word: { reason, at }. */
+  wordError: null,
+  /** Your pet's suggestion for this turn: { word }. */
+  hint: null,
+  /** Words you added to your Word Book this duel (shown with a NEW tag in the chain). */
+  freshWords: [],
+  /** An egg being hatched, for the hatching screen: { egg, pet, dup, refund, at }. */
+  hatching: null,
+  /** How many letters your opponent has typed on their turn: { n, at }. */
+  oppTyping: null,
   /**
-   * The bite being revealed at this table: { mine, cell, kind, hearts, until }. `kind`
-   * is null during the drumroll, then 'safe' | 'slap' | 'golden'; `hearts` is what
-   * the biter has left.
+   * The last thing that happened in your duel, for the callout under the VS bar:
+   * { kind: 'word' | 'timeout' | 'shield', mine, word?, bonus?, lucky?, hearts?, until }.
    */
-  reveal: null,
-  /** Chips picked so far while hiding slaps (cells of your own plate), before locking in. */
-  draft: [],
-  /**
-   * The big "YOUR TURN!" splash: { at, until } (epoch ms). It waits for the last
-   * bite's reveal card to finish, so it appears just as you can pick a chip.
-   */
+  callout: null,
+  /** The big "YOUR TURN!" splash: { at, until } (epoch ms). */
   turnSplash: null,
-  /** The "Quit the duel?" popup is open (only ever during the eating phase). */
+  /** The "Quit the duel?" popup is open (only ever during the playing phase). */
   quitAsk: false,
-  /** Full-screen flash for a slap / golden chip at your table: { kind, at, delay, until } (ms). */
+  /** Edge flash when you're too slow ('fail') or play a big word ('golden'): { kind, at, delay, until } (ms). */
   flash: null,
   /** Level-up celebration: { level, reward, title, until }. */
   levelUp: null,
@@ -56,16 +60,6 @@ export const useGame = create((set, get) => ({
   setShopTab: (shopTab) => set({ shopTab }),
   toggleEmotes: () => set({ emotesOpen: !get().emotesOpen }),
 
-  /**
-   * Picks or unpicks a chip to hide a slap in. Picking one more than allowed drops
-   * the oldest pick, so a tap always does something.
-   */
-  toggleDraft: (cell, max) => {
-    const draft = get().draft
-    if (draft.includes(cell)) set({ draft: draft.filter((c) => c !== cell) })
-    else set({ draft: [...(draft.length >= max ? draft.slice(1) : draft), cell] })
-  },
-
   pushToast: (text) => {
     const id = ++toastId
     set({ toasts: [...get().toasts.slice(-3), { id, text }] })
@@ -73,4 +67,4 @@ export const useGame = create((set, get) => ({
   },
 }))
 
-export const isPlayingPhase = (phase) => phase === 'hiding' || phase === 'eating'
+export const isPlayingPhase = (phase) => phase === 'playing'
