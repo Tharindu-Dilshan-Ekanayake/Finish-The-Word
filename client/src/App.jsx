@@ -9,6 +9,7 @@ import HUD from './ui/HUD'
 import InteractPrompt from './ui/InteractPrompt'
 import LoadingScreen from './ui/LoadingScreen'
 import MatchUI from './ui/MatchUI'
+import Presence from './ui/Presence'
 import Toasts from './ui/Toasts'
 import { useTouch } from './ui/touch'
 import TouchControls from './ui/TouchControls'
@@ -89,6 +90,7 @@ function App() {
         </Suspense>
       )}
       <Hatch />
+      <Presence />
       {!ready && <LoadingScreen />}
     </div>
   )

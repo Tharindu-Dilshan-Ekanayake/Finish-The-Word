@@ -30,3 +30,12 @@ export function send(msg) {
 export function retryConnection() {
   socket?.retryConnection()
 }
+
+/** A busier room to offer someone in a quiet one (see socket.findBusierRoom), or null. */
+export function findBusierRoom() {
+  return socket ? socket.findBusierRoom() : Promise.resolve(null)
+}
+
+export function moveToRoom(target) {
+  socket?.moveToRoom(target)
+}

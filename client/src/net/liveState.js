@@ -1,6 +1,6 @@
 import { Vector3 } from 'three'
 
-import { SPAWN } from '../game/layout'
+import { spawnPoint } from '../game/layout'
 
 /**
  * High-frequency game state that must never go through React or zustand: it is read
@@ -10,7 +10,7 @@ import { SPAWN } from '../game/layout'
 
 /** The local player. Written by Player's frame loop, read by camera, lights, net. */
 export const localPlayer = {
-  position: new Vector3(SPAWN[0], SPAWN[1], SPAWN[2]),
+  position: new Vector3(...spawnPoint()),
   ry: Math.PI,
   speed: 0,
   grounded: true,

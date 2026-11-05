@@ -658,6 +658,7 @@ const HELP_STEPS = [
   ['📚', 'Fill your Word Book', 'Every new word you play goes in your Word Book. Collect 10, 25, 50, 100… words for big cash rewards.'],
   ['⭐', 'Lucky letter', `Every day has a lucky letter. End a word with it for +$${DATA.lucky.cash}!`],
   ['🆙', 'Level up', 'Every duel gives XP. Each new level pays cash, and some unlock cool titles for your name.'],
+  ['💤', 'No sitting around', `Lobbies are for playing! Do nothing for ${Math.round(DATA.afk.kickSec / 6) / 10} minutes and you leave the lobby so someone else can join (you get a warning first).`],
   ['📜', 'Quests & gifts', 'Finish 3 daily quests, open a free gift every 10 minutes, and claim your daily reward.'],
   ['🛍️', 'Spend your cash', 'Buy chairs and thrones, glowing auras, titles and emotes in the Shop. Show them off!'],
   ['🔥', 'Win streaks', 'Win in a row for bonus cash at 3, 5 and 10 wins. Get on the leaderboards!'],

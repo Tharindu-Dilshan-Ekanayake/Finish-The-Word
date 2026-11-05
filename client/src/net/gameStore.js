@@ -10,11 +10,13 @@ import { create } from 'zustand'
 let toastId = 0
 
 export const useGame = create((set, get) => ({
-  /** 'connecting' | 'online' | 'offline' */
+  /** 'connecting' | 'online' | 'offline' | 'failed' | 'away' (removed for being AFK) */
   status: 'connecting',
+  /** "Are you still there?": { until } (epoch ms) when this player will be removed for being away. */
+  afkWarn: null,
   selfId: null,
   roomId: null,
-  capacity: 20,
+  capacity: 30,
   /** id -> { id, name, streak, equipped, proportions } */
   players: {},
   /** id -> public table state + `endsAt` */

@@ -4,6 +4,8 @@ const profiles = require('./profiles')
 
 const HALF = DATA.world.half
 const EMOTE_COOLDOWN_MS = 1500
+/** A position this far from the last one (x + y + z) is movement, not a heartbeat. */
+const MOVED = 0.05
 const ANIM_COOLDOWN_MS = 800
 /** Bloxity emote catalogue ids are 24-character hex strings. */
 const ANIM_ID = /^[a-f0-9]{24}$/i
@@ -69,6 +71,9 @@ class Session {
     this.seat = null
     this.lastEmoteAt = 0
     this.lastAnimAt = 0
+    /** When they last did something themselves (see touch), and whether they've been warned. */
+    this.lastActiveAt = now
+    this.afkWarned = false
     /** Verified Bloxity account id, or '' for a guest. */
     this.userId = identity.userId
 
@@ -107,9 +112,11 @@ class Session {
     this.send('profile', { profile: this.profileView(now) })
   }
 
-  /** Back to the lobby spawn point (after losing a duel). */
+  /** Back to the lobby spawn point (after losing a duel), a little to one side. */
   respawn() {
-    const [x, y, z] = DATA.world.spawn
+    const [sx, y, sz] = DATA.world.spawn
+    const x = sx + (Math.random() - 0.5) * 3.2
+    const z = sz + (Math.random() - 0.5) * 1.6
     const p = this.player
     p.x = x
     p.y = y
@@ -134,12 +141,30 @@ class Session {
     profiles.markDirty(this.profile)
   }
 
+  /**
+   * The player did something themselves: they're not AFK (see GameRoom.checkAfk).
+   * A pending "Are you still there?" warning is called off.
+   */
+  touch(now) {
+    this.lastActiveAt = now
+    if (this.afkWarned) {
+      this.afkWarned = false
+      this.send('afkWarn', { inMs: 0 })
+    }
+  }
+
   /** Routes one client message. `msg` is untrusted. */
   handle(type, msg, now) {
     msg = msg && typeof msg === 'object' ? msg : {}
+    // Anything sent on purpose counts as activity. Not a position heartbeat (only
+    // real movement counts, see onPos), nor the avatar the client re-sends by itself.
+    if (type !== 'pos' && type !== 'avatar') this.touch(now)
     switch (type) {
       case 'pos':
-        return this.onPos(msg)
+        return this.onPos(msg, now)
+      case 'active':
+        // A tap, key or click with nothing else to send (menus, camera, chat).
+        return undefined
       case 'sit':
         return this.onSit(msg, now)
       case 'leave':
@@ -173,12 +198,17 @@ class Session {
     }
   }
 
-  onPos(msg) {
+  onPos(msg, now) {
     if (this.seat) return
     const p = this.player
-    p.x = clamp(finite(msg.x, p.x), -HALF, HALF)
-    p.y = clamp(finite(msg.y, 0), -5, 20)
-    p.z = clamp(finite(msg.z, p.z), -HALF, HALF)
+    const x = clamp(finite(msg.x, p.x), -HALF, HALF)
+    const y = clamp(finite(msg.y, 0), -5, 20)
+    const z = clamp(finite(msg.z, p.z), -HALF, HALF)
+    // Walking or jumping is activity; the once-a-second "still here" resend is not.
+    if (Math.abs(x - p.x) + Math.abs(y - p.y) + Math.abs(z - p.z) > MOVED) this.touch(now)
+    p.x = x
+    p.y = y
+    p.z = z
     p.ry = finite(msg.ry)
     p.s = clamp(finite(msg.s), 0, 20)
     p.g = Boolean(msg.g)

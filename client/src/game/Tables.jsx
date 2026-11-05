@@ -176,14 +176,16 @@ function SeatAuras() {
 
 const heartsText = (n) => '❤️'.repeat(Math.max(0, n)) || '💔'
 
-function tableLines(table, weekend, now) {
+function tableLines(table, weekend, now, stage = false) {
   const reward = DATA.winReward * (weekend ? 2 : 1)
   const prize = weekend
     ? { text: `Win $${reward} (x2)`, size: 34, rainbow: true }
     : { text: `Win $${reward}`, size: 34, color: '#5cff5c' }
   if (!table || table.phase === 'waiting') {
     const n = table ? table.seats.filter(Boolean).length : 0
-    return [{ text: `${n}/2 Players`, size: 40 }, prize]
+    const lines = [{ text: `${n}/2 Players`, size: 40 }, prize]
+    if (stage) lines.unshift({ text: '⭐ CENTER STAGE ⭐', size: 30, color: '#ffd23d' })
+    return lines
   }
   if (table.phase === 'countdown') {
     return [{ text: `Starting in ${Math.max(1, Math.ceil((table.endsAt - now) / 1000))}`, size: 40 }]
@@ -211,13 +213,15 @@ function TableLabel({ table }) {
     const update = () => {
       const s = useGame.getState()
       label.set(
-        s.match?.table === table.id ? [] : tableLines(s.tables[table.id], s.profile?.weekend, Date.now()),
+        s.match?.table === table.id
+          ? []
+          : tableLines(s.tables[table.id], s.profile?.weekend, Date.now(), Boolean(table.stage)),
       )
     }
     update()
     const id = setInterval(update, 250)
     return () => clearInterval(id)
-  }, [label, table.id])
+  }, [label, table.id, table.stage])
 
   useCulled(label.sprite, table.x, table.z, { label, group: 'tables' })
   return <primitive object={label.sprite} position={[table.x, 3.3, table.z]} />

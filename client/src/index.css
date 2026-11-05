@@ -377,6 +377,17 @@ canvas {
   animation: shake 0.4s both;
 }
 
+/* "N players in another lobby": under the top bar, clear of the cash pills. */
+.lobby-offer-pos {
+  top: 5.6rem;
+}
+@media (orientation: portrait) {
+  .lobby-offer-pos {
+    top: auto;
+    bottom: 1rem;
+  }
+}
+
 /* ---- Pet eggs ------------------------------------------------------------------- */
 /* An egg drawn in CSS: taller than wide, narrower at the top. */
 .egg-swatch {

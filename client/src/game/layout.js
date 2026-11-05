@@ -7,9 +7,10 @@ import DATA from '../../../shared/gameData.json'
  * The lobby is a summer boardwalk. From the spawn point (south) a wooden boardwalk
  * runs north through the entrance arch, under strings of bunting, to a round plaza
  * with the letter-block fountain, the four leaderboards fanned out behind it. The
- * ten duel tables stand in two rows of five either side of the boardwalk, on decks
- * tiled like a giant word-game board, each turned so its players sit with their
- * backs to the boardwalk. Beyond them: the chair showroom in a straight row (east),
+ * fifteen duel tables (thirty seats: a full room) stand in two rows of seven either
+ * side of the boardwalk, on decks tiled like a giant word-game board, each turned so
+ * its players sit with their backs to the boardwalk; the fifteenth, the Center
+ * Stage, stands at the boardwalk's end with the fountain behind its players. Beyond them: the chair showroom in a straight row (east),
  * the emote stall and beach umbrellas (west), the pet egg stand and the "how to
  * play" board by the arch, and palms round the edge.
  */
@@ -18,6 +19,8 @@ export { DATA }
 export const TABLE = DATA.table
 export const WORLD_HALF = DATA.world.half
 export const SPAWN = DATA.world.spawn
+/** A spot on the spawn point, a little to either side, so arrivals don't stand inside each other. */
+export const spawnPoint = () => [SPAWN[0] + (Math.random() - 0.5) * 3.2, SPAWN[1], SPAWN[2] + (Math.random() - 0.5) * 1.6]
 
 export const PLAYER_HEIGHT = 1.8
 /** How far a seated avatar's hips drop and slide back onto the chair. */
@@ -79,16 +82,18 @@ export const DECKS = [
   [4, 11],
   [-11, -4],
 ]
-export const DECK_Z = [-15.5, 15.5]
+export const DECK_Z = [-16.6, 16.6]
 /** Lamp posts along both edges of the boardwalk, in the gaps between the tables. */
-const LAMP_Z = [15.6, 9.375, 3.125, -3.125, -9.375, -14.6]
+const LAMP_Z = [17.1, 12.25, 7.35, 2.45, -2.45, -7.35]
 export const LAMP_ROWS = [-1, 1].map((side) => LAMP_Z.map((z) => [side * 3.3, z]))
 export const LAMPS = LAMP_ROWS.flat()
 /** Cross paths from the boardwalk to the shops, through gaps between tables: [z, toX]. */
 export const CROSS_PATHS = [
-  [3.125, 16.8],
-  [-3.125, -18],
+  [2.45, 16.8],
+  [-2.45, -18],
 ]
+/** The Center Stage: the table at the boardwalk's north end, in front of the fountain. */
+export const STAGE_TABLE = DATA.tables.find((t) => t.stage) || null
 
 export const SHOP_CHAIRS = DATA.chairs.filter((c) => c.shop)
 /** The chair showroom: a straight row of pedestals on the east side, facing west. */

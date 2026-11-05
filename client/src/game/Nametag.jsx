@@ -9,17 +9,24 @@ import { titleById } from './layout'
 import { getSettings } from './quality'
 import { useDisposable } from './useDisposable'
 
+/** The lowest a name sits: just over a regular avatar's head. */
 const NAME_Y = 2.05
+/** Gap between the top of the head (or hat) and the name. */
+const HEAD_GAP = 0.14
 const _world = new Vector3()
 
 /**
  * Name (with win streak) above a player's head, plus their speech bubble: emotes,
- * "Crunch! 😋", "OUCH! 😵"... Bubbles arrive through liveState, so a new
- * one redraws a canvas but never re-renders React.
+ * their words, "HAHA! 🤣"... Bubbles arrive through liveState, so a new one
+ * redraws a canvas but never re-renders React.
+ *
+ * `top` ({ y }) is the measured top of their head, hat included (see PlayerAvatar
+ * headTop): the name rises above tall avatars, big heads and hats instead of
+ * showing through them.
  *
  * Place inside the player's group; distance is measured from the tag's world position.
  */
-export function Nametag({ id, name, streak, title = '', isSelf = false, gate = null }) {
+export function Nametag({ id, name, streak, title = '', isSelf = false, gate = null, top = null }) {
   const ref = useRef(null)
   const seenVersion = useRef(0)
   const labels = useDisposable(
@@ -73,7 +80,9 @@ export function Nametag({ id, name, streak, title = '', isSelf = false, gate = n
     labels.bubble.sprite.visible = Boolean(
       b && b.until > Date.now() && (allowed || d < 6) && d < limit * 1.5 && !labels.bubble.empty,
     )
-    labels.bubble.sprite.position.y = NAME_Y + labels.name.sprite.scale.y + 0.06
+    const nameY = Math.max(NAME_Y, (top?.y || 0) + HEAD_GAP)
+    labels.name.sprite.position.y = nameY
+    labels.bubble.sprite.position.y = nameY + labels.name.sprite.scale.y + 0.06
   })
 
   return (

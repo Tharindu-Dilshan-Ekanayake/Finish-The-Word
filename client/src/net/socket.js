@@ -3,7 +3,7 @@ import { Callbacks, Client } from '@colyseus/sdk'
 import { sfx } from '../audio/sfx'
 import { boxityEnv } from '../bloxity/env'
 import { loadEmoteCatalog, onPlatformEvent, platform } from '../bloxity/platform'
-import { DATA, SEATED_BACK, seatPosition, SPAWN } from '../game/layout'
+import { DATA, SEATED_BACK, seatPosition, spawnPoint } from '../game/layout'
 import { getSettings } from '../game/quality'
 import { FAINT_DELAY_MS, LAUGH_MS } from '../game/seatPose'
 import { useGame } from './gameStore'
@@ -54,8 +54,12 @@ const GIVE_UP_MS = 60000
 const INITIAL_SYNC_MS = 1500
 /** The server's close code when this account joined from another window. */
 const KICKED_REPLACED = 4100
+/** The server's close code when this player was away too long (AFK) and lost their slot. */
+const KICKED_AWAY = 4101
 /** Consented leave (we called room.leave()). */
 const CONSENTED = 4000
+/** A tap or key press tells the server we're still here, at most this often. */
+const ACTIVE_PING_MS = 10000
 
 let room = null
 /** Matchmaker relay room the current room was reached through (hosting only). */
@@ -73,10 +77,28 @@ let clockOffset = 0
 let deepLinkRoomId = new URLSearchParams(window.location.search).get('roomId')
 /** After signing in mid-game: the room to rejoin with the new identity. */
 let rejoinTarget = null
+/** "Join them": a busier room to move to, `{ roomId, url }` (see moveToRoom). */
+let hopTarget = null
+let lastActivePing = 0
 const lastSent = { x: 0, y: 0, z: 0, ry: 0, s: 0, g: true, at: 0 }
 
 const viaMatchmaker = () => Boolean(HOSTING_ID) && boxityEnv().env !== 'local'
 const toWs = (url) => url.replace(/^http/i, 'ws')
+const toHttp = (url) => url.replace(/^ws/i, 'http')
+const isBotId = (id) => id.startsWith('bot-')
+
+/** A game server reached directly (not through Bloxity's matchmaker). */
+function directUrl() {
+  if (import.meta.env.VITE_SERVER_URL) return import.meta.env.VITE_SERVER_URL
+  // Told it is on a local Bloxity stack: the "matchmaker" is your local game server.
+  // (Only when told: the SDK also calls any localhost page 'local', without one.)
+  const told = window.BLOXITY_ENV
+  if (told?.env === 'local' && told.playUrl) return told.playUrl
+  // Dev: Vite serves the page on :5173, the game server runs on :3000. Self-hosted
+  // production: the game server serves the page itself.
+  if (import.meta.env.DEV) return `${window.location.protocol}//${window.location.hostname}:3000`
+  return window.location.origin
+}
 
 /** Where to open the next connection: `{ url, relayRoomId? }`. */
 async function endpointFor() {
@@ -86,15 +108,73 @@ async function endpointFor() {
     const resolved = await platform.resolveEndpoint(HOSTING_ID, { userId: hello?.userId })
     return { url: resolved.endpoint, relayRoomId: resolved.roomId }
   }
-  if (import.meta.env.VITE_SERVER_URL) return { url: import.meta.env.VITE_SERVER_URL }
-  // Told it is on a local Bloxity stack: the "matchmaker" is your local game server.
-  // (Only when told: the SDK also calls any localhost page 'local', without one.)
-  const told = window.BLOXITY_ENV
-  if (told?.env === 'local' && told.playUrl) return { url: told.playUrl }
-  // Dev: Vite serves the page on :5173, the game server runs on :3000. Self-hosted
-  // production: the game server serves the page itself.
-  if (import.meta.env.DEV) return { url: `${window.location.protocol}//${window.location.hostname}:3000` }
-  return { url: window.location.origin }
+  return { url: directUrl() }
+}
+
+/**
+ * Every room players can join right now, `{ roomId, players, max, open, url }`:
+ * on Bloxity hosting from the cross-pod room directory (all pods), otherwise from
+ * this server's /api/rooms. `players` counts real players only. [] if unavailable.
+ */
+async function listRooms() {
+  try {
+    if (viaMatchmaker()) {
+      const res = await fetch(`${boxityEnv().playUrl}/v1/dir/${encodeURIComponent(HOSTING_ID)}/list`, {
+        signal: AbortSignal.timeout(4000),
+      })
+      const body = await res.json()
+      const rooms = Array.isArray(body) ? body : body.rooms || []
+      return rooms
+        .filter((r) => r.joinUrl && !r.private)
+        .map((r) => {
+          const players = Number(r.clients) || 0
+          const max = Number(r.maxClients) || DATA.roomSize
+          return { roomId: r.colyseusRoomId || r.roomId || r.id, players, max, open: !r.locked && players < max, url: toWs(r.joinUrl) }
+        })
+    }
+    const base = toHttp(directUrl())
+    const res = await fetch(`${base}/api/rooms`, { signal: AbortSignal.timeout(4000) })
+    const rooms = await res.json()
+    return rooms.map((r) => ({ roomId: r.id, players: r.players, max: r.max, open: !r.locked && r.players < r.max, url: base }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Hosting: into the busiest room that has space, across every pod, so a new player
+ * lands where people are instead of in an empty room. null when there's none.
+ */
+async function joinBusiest() {
+  const rooms = (await listRooms()).filter((r) => r.open && r.players > 0).sort((a, b) => b.players - a.players)
+  for (const r of rooms.slice(0, 3)) {
+    const joined = await joinById(r.url, r.roomId)
+    if (joined) return joined
+  }
+  return null
+}
+
+/**
+ * A room with clearly more real players than ours (at least two more) that has
+ * space, for the "Join them" offer to someone in a quiet room. null if none.
+ */
+export async function findBusierRoom() {
+  if (!room) return null
+  const here = Object.keys(useGame.getState().players).filter((id) => !isBotId(id)).length
+  const best = (await listRooms())
+    .filter((r) => r.roomId !== room?.roomId && r.open && r.players >= here + 2)
+    .sort((a, b) => b.players - a.players)[0]
+  return best || null
+}
+
+/** "Join them": leave this room for `target` (from findBusierRoom). */
+export function moveToRoom(target) {
+  if (!hello || !target) return
+  hopTarget = target
+  const previous = detachRoom()
+  firstAttemptAt = 0
+  retryDelay = 500
+  join().finally(() => previous?.leave(true).catch(() => {}))
 }
 
 /** Sends `{ t: type, ...payload }` to the room; dropped while not connected. */
@@ -187,7 +267,12 @@ async function join() {
     let joined = null
     let via = target.relayRoomId || null
 
-    if (rejoinTarget) {
+    if (hopTarget) {
+      const hop = hopTarget
+      hopTarget = null
+      joined = await joinById(hop.url, hop.roomId)
+      via = null
+    } else if (rejoinTarget) {
       const back = rejoinTarget
       rejoinTarget = null
       const url = back.relayRoomId ? `${toWs(boxityEnv().playUrl)}/v1/ws/${back.relayRoomId}` : target.url
@@ -198,7 +283,12 @@ async function join() {
       deepLinkRoomId = null
       joined = await joinDeepLink(id, target)
     }
-    // joinOrCreate fills a room to its 20 players before opening the next one.
+    // Hosting: the busiest room with space on any pod. Otherwise (and as a fallback)
+    // joinOrCreate, which the server points at its busiest room with space (sortBy).
+    if (!joined && viaMatchmaker()) {
+      joined = await joinBusiest()
+      if (joined) via = null
+    }
     joined ||= await new Client(target.url).joinOrCreate(ROOM_NAME, hello)
 
     if (token !== joinToken) {
@@ -315,14 +405,36 @@ function attach(r) {
     clearInterval(posTimer)
     platform.updateRoom('')
     resetWorld()
-    useGame.setState({ status: 'offline' })
-    if (code === KICKED_REPLACED || code === CONSENTED) return
+    // Removed for being away: no automatic rejoin; the "Play again" screen asks.
+    useGame.setState({ status: code === KICKED_AWAY ? 'away' : 'offline', afkWarn: null })
+    if (code === KICKED_REPLACED || code === CONSENTED || code === KICKED_AWAY) return
     // Closed unexpectedly (e.g. its pod is being replaced): resolve again and rejoin.
     scheduleRejoin()
   })
   r.onError((code, message) => console.warn('[net] room error', code, message))
 
   startPositionUpdates()
+}
+
+/* ---- Being here ------------------------------------------------------------------- */
+
+/**
+ * Any tap, click, key or scroll tells the server this player is still here (the
+ * server removes players who are away, see GameRoom.checkAfk): at most every
+ * ACTIVE_PING_MS, and at once if an "Are you still there?" warning is up.
+ * Walking is noticed by the server from position updates on its own.
+ */
+function noteActivity() {
+  if (!room || useGame.getState().status !== 'online') return
+  const warned = Boolean(useGame.getState().afkWarn)
+  const now = Date.now()
+  if (!warned && now - lastActivePing < ACTIVE_PING_MS) return
+  lastActivePing = now
+  room.send('active', {})
+  if (warned) useGame.setState({ afkWarn: null })
+}
+for (const type of ['keydown', 'pointerdown', 'wheel']) {
+  window.addEventListener(type, noteActivity, { capture: true, passive: true })
 }
 
 /* ---- Platform events ------------------------------------------------------------ */
@@ -347,7 +459,7 @@ onPlatformEvent('respawn', () => {
   if (useGame.getState().match) send({ t: 'leave' })
   localPlayer.seat = null
   localPlayer.emote = null
-  localPlayer.position.set(SPAWN[0], SPAWN[1], SPAWN[2])
+  localPlayer.position.set(...spawnPoint())
   localPlayer.ry = Math.PI
   localPlayer.snapCamera = true
 })
@@ -359,6 +471,8 @@ onPlatformEvent('chat', (m) => {
     ? selfId
     : Object.values(players).find((p) => p.uid && p.uid === m.userId)?.id
   if (id) setBubble(id, m.text, m.seconds * 1000)
+  // Chatting (in Bloxity's own chat box) is being here too.
+  if (m.isLocalPlayer) noteActivity()
 })
 
 onPlatformEvent('breakStart', () => sfx.setMuted(true))
@@ -682,6 +796,16 @@ const handlers = {
 
   bubble(msg) {
     setBubble(msg.id, msg.text)
+  },
+
+  /**
+   * Away a while: "Are you still there?", removed from the room in `inMs` unless
+   * they do something. `inMs` 0: they did, the warning is off.
+   */
+  afkWarn(msg) {
+    const inMs = Number(msg.inMs) || 0
+    if (inMs > 0) sfx.turn()
+    useGame.setState({ afkWarn: inMs > 0 ? { until: Date.now() + inMs } : null })
   },
 
   toast(msg) {

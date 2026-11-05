@@ -15,7 +15,7 @@ import { useGame } from '../net/gameStore'
 import { actionFx, avatarAnchors, localPlayer, remoteEmotes, remotes, remoteSeats } from '../net/liveState'
 import { mergedBoxes } from './instancing'
 import Nametag from './Nametag'
-import { FLOOR, PLAYER_HEIGHT } from './layout'
+import { DATA, FLOOR, PLAYER_HEIGHT } from './layout'
 import PlayerAvatar from './PlayerAvatar'
 import { getSettings } from './quality'
 import { skipWhenHidden } from './sceneGraph'
@@ -24,7 +24,7 @@ import { useDisposable } from './useDisposable'
 
 /** One snapshot interval: interpolation always runs one packet behind. */
 const INTERP_S = 0.1
-const MAX_PLAYERS = 20
+const MAX_PLAYERS = DATA.roomSize
 
 /** id -> { group, visual, full, active, isFull, dist } */
 const registry = new Map()
@@ -89,6 +89,8 @@ const RemotePlayer = memo(function RemotePlayer({ meta }) {
   const tagRef = useRef(null)
   /** Set by RemotePlayers each frame: is this one of the nearest few whose tag shows? */
   const [tagGate] = useState(() => ({ show: true }))
+  /** Top of their head, measured by PlayerAvatar, so the name sits above it. */
+  const [headTop] = useState(() => ({ y: 0 }))
   // Offset idle animations so a seated crowd doesn't breathe in unison.
   const motionRef = useRef({ time: id.length * 1.7, speed: 0, grounded: true, maxSpeed: 7, seated: false })
 
@@ -166,12 +168,13 @@ const RemotePlayer = memo(function RemotePlayer({ meta }) {
               castShadow={false}
               targetHeight={PLAYER_HEIGHT}
               motionRef={motionRef}
+              headTop={headTop}
             />
           </Suspense>
         </group>
       </group>
       <group ref={tagRef}>
-        <Nametag id={id} name={meta.name} streak={meta.streak} title={meta.title} gate={tagGate} />
+        <Nametag id={id} name={meta.name} streak={meta.streak} title={meta.title} gate={tagGate} top={headTop} />
       </group>
     </group>
   )
@@ -180,10 +183,11 @@ const RemotePlayer = memo(function RemotePlayer({ meta }) {
 /**
  * Everyone else in the room.
  *
- * LOD: only the nearest `maxFullAvatars` (per quality preset) are drawn as full
- * Bloxity avatars, ~6 draw calls each. The rest are one instanced blocky crowd mesh,
- * and everyone gets an instanced blob shadow, so 19 other players cost at most
- * maxFullAvatars * 6 + 2 draw calls.
+ * LOD: the nearest `maxFullAvatars` within `fullDistance` (per quality preset) are
+ * drawn as full Bloxity avatars: a merged body plus worn items, 1–4 draw calls
+ * each, nothing when off-screen. The rest, far off or past the cap, are one
+ * instanced blocky crowd mesh, and everyone gets an instanced blob shadow, so the
+ * other 29 players cost at most maxFullAvatars * 4 + 2 draw calls.
  */
 export function RemotePlayers() {
   const players = useGame((s) => s.players)
@@ -236,7 +240,7 @@ export function RemotePlayers() {
     let blobs = 0
     for (let i = 0; i < ordered.length; i += 1) {
       const e = ordered[i]
-      const full = i < settings.maxFullAvatars
+      const full = i < settings.maxFullAvatars && e.dist < settings.fullDistance
       e.full.visible = full
       e.tagGate.show = i < settings.maxNames
 

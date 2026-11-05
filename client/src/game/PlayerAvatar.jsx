@@ -26,6 +26,8 @@ import {
   attachItem,
   collectRestInverses,
   collectRig,
+  headTopLocal,
+  itemTopLocal,
   updateFollowers,
 } from './avatarRig'
 import { mergeBody, unmergeBody } from './mergeBody'
@@ -48,6 +50,9 @@ function isShown(object) {
 
 /** Head and torso bones whose items a custom character fits with characterAccessoryMatrix. */
 const FITTED_BONES = new Set(['Neck1', 'Spine1', 'Spine2'])
+
+const _head = new Vector3()
+const _feet = new Vector3()
 
 /**
  * The player's uploaded custom character, if they wear one: the SDK's character
@@ -107,6 +112,9 @@ function useCustomCharacter(equipped) {
  *   rescaled rather than trusted at native size.
  *   `motionRef.current.emote` ({ clip, start }) plays a Bloxity emote; it gets
  *   `done: true` when a non-looping clip finishes.
+ *   `headTop` ({ y }), if given, gets the height of the top of the head (hat or hair
+ *   included) above the feet, every frame the avatar is drawn: tall avatars, big
+ *   heads and hats all differ, and the name tag goes above it (see Nametag).
  */
 export const PlayerAvatar = forwardRef(function PlayerAvatar(
   {
@@ -117,6 +125,7 @@ export const PlayerAvatar = forwardRef(function PlayerAvatar(
     proportions: proportionsProp,
     silent = false,
     castShadow = true,
+    headTop = null,
     ...props
   },
   ref,
@@ -156,6 +165,8 @@ export const PlayerAvatar = forwardRef(function PlayerAvatar(
     if (!collected.skeleton) {
       console.warn('[bloxity] avatar model has no skeleton - avatar will not deform')
     }
+    // Top of the bare head, in the hat bone's frame; assembly raises it for head parts and hats.
+    collected.headTop = headTopLocal(collected)
     return collected
   }, [character, custom, castShadow])
 
@@ -240,6 +251,7 @@ export const PlayerAvatar = forwardRef(function PlayerAvatar(
       .then((results) => {
         if (cancelled) return
 
+        const headItems = []
         for (const result of results) {
           // One bad slot must not take the rest of the character down.
           try {
@@ -275,6 +287,10 @@ export const PlayerAvatar = forwardRef(function PlayerAvatar(
               for (const object of objects) {
                 if (!castShadow) object.traverse((child) => (child.castShadow = false))
                 attached.push(object)
+                // A hat (or tall hair) raises the top of the head, and the name with it.
+                if (slot.kind === 'head' && !accessoryMatrix && object.parent === rig.hatBone) {
+                  headItems.push(object)
+                }
               }
               followers.current.push(...moving)
             }
@@ -282,6 +298,9 @@ export const PlayerAvatar = forwardRef(function PlayerAvatar(
             console.warn(`[bloxity] failed to apply ${result.kind}`, err)
           }
         }
+
+        // The top of the head as worn: the (possibly swapped) head part, or a hat on it.
+        rig.headTop = headItems.reduce((top, item) => Math.max(top, itemTopLocal(item)), headTopLocal(rig))
 
         // One draw call for the whole body instead of six (custom characters keep
         // their own meshes and materials).
@@ -337,6 +356,15 @@ export const PlayerAvatar = forwardRef(function PlayerAvatar(
         motion.emote.done = true
       }
       updateFollowers(rig, followers.current)
+      if (headTop && rig.hatBone) {
+        // The measured top of the head (or hat), through the bone's own transform:
+        // height, head size and pose all included. Last frame's matrices: a frame
+        // behind, which nobody can see.
+        _head.set(0, rig.headTop, 0)
+        rig.hatBone.localToWorld(_head)
+        rootRef.current.getWorldPosition(_feet)
+        headTop.y = _head.y - (_feet.y - fit.footOffset)
+      }
     } catch {
       // A malformed payload must not kill the render loop.
     }

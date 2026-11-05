@@ -20,12 +20,16 @@ const LEADERBOARD_PUSH_MS = 15000
 const PLAYTIME_TICK_MS = 30000
 /** Close code for a session replaced by the same account joining from elsewhere. */
 const REPLACED = 4100
+/** Close code for a player removed for being away (AFK), so their slot frees up. */
+const AWAY = 4101
+/** How often everyone is checked for being away. */
+const AFK_CHECK_MS = 5000
 
 /** profile id -> live session, across every room in this process. */
 const liveByProfile = new Map()
 
 /**
- * One game server: up to 20 players sharing the island and its ten tables.
+ * One game server: up to DATA.roomSize (30) players sharing the island and its tables.
  *
  * Colyseus matchmaking fills a room to `maxClients`, locks it, and `joinOrCreate`
  * then opens a new one, so "server size 20" is just the cap here.
@@ -61,6 +65,7 @@ class GameRoom extends Room {
     this.clock.setInterval(() => this.pushLeaderboard(), LEADERBOARD_PUSH_MS)
     this.lastPlaytimeTick = Date.now()
     this.clock.setInterval(() => this.tickPlaytime(), PLAYTIME_TICK_MS)
+    this.clock.setInterval(() => this.checkAfk(Date.now()), AFK_CHECK_MS)
   }
 
   /**
@@ -131,11 +136,40 @@ class GameRoom extends Room {
     console.error(`[game] room ${this.roomId} ${methodName} failed:`, error)
   }
 
-  /** Disconnects a session, including one that is mid-reconnect. */
-  kick(session) {
+  /**
+   * Players who are away free their slot for someone who wants to play: warned
+   * after DATA.afk.warnSec without doing anything ("Are you still there?"), removed
+   * from the room after DATA.afk.kickSec. In a duel the duel's own rule applies
+   * instead (two idle turns lose it), so nobody is removed mid-game.
+   */
+  checkAfk(now) {
+    const { warnSec, kickSec } = DATA.afk
+    for (const session of this.sessions.values()) {
+      if (session.kicked || session.reconnection) continue
+      const phase = session.seat?.table.phase
+      if (phase === 'countdown' || phase === 'playing' || phase === 'ended') {
+        session.lastActiveAt = now
+        continue
+      }
+      const idle = now - session.lastActiveAt
+      if (idle >= kickSec * 1000) {
+        console.log(`[afk] room ${this.roomId}: removing ${session.player.name} after ${Math.round(idle / 1000)} s away`)
+        this.kick(session, AWAY)
+      } else if (idle >= warnSec * 1000 && !session.afkWarned) {
+        session.afkWarned = true
+        session.send('afkWarn', { inMs: kickSec * 1000 - idle })
+      }
+    }
+  }
+
+  /**
+   * Disconnects a session, including one that is mid-reconnect. `code` tells the
+   * client why: REPLACED (joined from elsewhere) or AWAY (removed for being AFK).
+   */
+  kick(session, code = REPLACED) {
     session.kicked = true
-    if (session.reconnection) session.reconnection.reject(new Error('replaced'))
-    else session.client.leave(REPLACED)
+    if (session.reconnection) session.reconnection.reject(new Error('kicked'))
+    else session.client.leave(code)
   }
 
   sendWelcome(session, now) {

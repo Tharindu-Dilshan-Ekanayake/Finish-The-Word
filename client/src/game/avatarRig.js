@@ -240,6 +240,39 @@ export function collectRestInverses(root) {
   return out
 }
 
+/** Top of the head in the hat bone's frame when the head mesh can't be measured. */
+const FALLBACK_HEAD_TOP = 1.6
+const _top = new Vector3()
+
+/**
+ * How high the top of the head reaches above the hat bone (Neck1), in that bone's
+ * own frame, from the head mesh's bind-pose geometry. Being in the bone's frame,
+ * `hatBone.localToWorld` turns it into the real top whatever the avatar's height,
+ * head size or pose. The fallback covers custom characters with no head part.
+ */
+export function headTopLocal(rig) {
+  const head = rig.partMeshes?.head
+  const index = rig.skeleton?.bones.indexOf(rig.hatBone) ?? -1
+  if (!head || index < 0) return FALLBACK_HEAD_TOP
+  head.geometry.computeBoundingBox()
+  const box = head.geometry.boundingBox
+  _top.set((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2)
+  // Geometry space -> skeleton bind space -> the bone's own frame.
+  _top.applyMatrix4(head.bindMatrix).applyMatrix4(rig.skeleton.boneInverses[index])
+  return Number.isFinite(_top.y) && _top.y > 0 ? _top.y : FALLBACK_HEAD_TOP
+}
+
+/** The top of a worn head item (hat, hair, mask) in the hat bone's frame. */
+export function itemTopLocal(object) {
+  let top = -Infinity
+  object.traverse((child) => {
+    if (!child.isMesh) return
+    child.geometry.computeBoundingBox()
+    top = Math.max(top, child.geometry.boundingBox.max.y * child.scale.y + child.position.y)
+  })
+  return Number.isFinite(top) ? object.position.y + top * object.scale.y : -Infinity
+}
+
 /** Where head / back items sit in player.glb model space (for custom characters). */
 const MODEL_PLACEMENT = { head: [0, 5.6, 0], back: [0, 4.2, 0] }
 
