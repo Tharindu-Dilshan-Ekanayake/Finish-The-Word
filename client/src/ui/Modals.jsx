@@ -20,7 +20,11 @@ function Frame({ title, children, tabs }) {
   }, [close])
 
   return (
-    <div className="pointer-events-auto absolute inset-0 z-50 flex items-center justify-center bg-black/55" onClick={close}>
+    <div
+      className="pointer-events-auto absolute inset-0 z-50 flex items-center justify-center bg-black/55"
+      style={{ paddingBottom: 'var(--ad-bottom, 0px)' }}
+      onClick={close}
+    >
       <div className="pop-in relative w-[min(94vw,36rem)]" onClick={(e) => e.stopPropagation()}>
         <h2 className="stroke-text absolute -top-[0.9em] left-0 right-0 z-10 text-center text-[2.6rem] font-bold leading-none text-white">
           {title}
@@ -37,7 +41,13 @@ function Frame({ title, children, tabs }) {
         </button>
         <div className="rounded-2xl border-[4px] border-black bg-gradient-to-b from-[#24606d] to-[#16404a] p-3 pt-8 shadow-2xl">
           {tabs}
-          <div className="game-scroll flex max-h-[min(62vh,30rem)] flex-col gap-2 overflow-y-auto pr-1">{children}</div>
+          {/* Shorter while a banner sits below the popup (--ad-bottom, see setAdScreen). */}
+          <div
+            className="game-scroll flex flex-col gap-2 overflow-y-auto pr-1"
+            style={{ maxHeight: 'min(62vh, 30rem, calc(100dvh - var(--ad-bottom, 0px) - 9rem))' }}
+          >
+            {children}
+          </div>
         </div>
       </div>
     </div>
