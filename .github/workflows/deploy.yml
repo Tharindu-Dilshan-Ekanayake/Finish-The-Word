@@ -107,9 +107,12 @@ jobs:
 
       - name: Roll out the server
         run: |
-          # roomSize, not seatCap: Bloxity decides how many players each pod gets.
+          # The room's player cap (Colyseus maxClients, shared/gameData.json roomSize):
+          # a pod fills to it, then the matchmaker starts another. Sent as both
+          # seatCap (the hosting docs) and roomSize (newer platform template).
           body=$(jq -n --arg channel "$CHANNEL" --arg image "${{ steps.image.outputs.ref }}" \
-            --arg version "${{ github.sha }}" '{channel: $channel, image: $image, version: $version, roomSize: 30}')
+            --arg version "${{ github.sha }}" --argjson cap "$(jq '.roomSize' shared/gameData.json)" \
+            '{channel: $channel, image: $image, version: $version, seatCap: $cap, roomSize: $cap}')
           curl -sf -X POST "$LEGION_URL/v1/apps/$GAME_ID/deploy" \
             -H "Authorization: Bearer $DEPLOY_TOKEN" -H 'Content-Type: application/json' -d "$body"
 

@@ -1,5 +1,5 @@
 ---
-gameSlug: slap-chips
+gameSlug: finish-the-word
 clientDir: client
 buildCommand: npm ci && npm run build
 distDir: client/dist

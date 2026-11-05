@@ -101,8 +101,17 @@ export function initPlatform(gameSlug = GAME_SLUG) {
   return initPromise
 }
 
-/** Bloxity may start an ad break at any time: pause and mute until it ends. */
+/**
+ * No ads: every screen Bloxity knows is declared as showing no banners, and the game
+ * never asks for one (see setAdScreen). Mid-roll breaks are the portal's to start;
+ * the game reports gameplay as running the whole session (gameplayStart at load,
+ * gameplayEnd only when the page closes) so none should come mid-game. If one does
+ * anyway, the game pauses and mutes until it ends.
+ */
+const NO_BANNERS = { menu: { show: false }, lobby: { show: false }, results: { show: false }, panel: { show: false }, gameplay: { show: false } }
+
 function wireAds(sdk) {
+  safeCall(() => sdk.ads.declareScreens(NO_BANNERS))
   safeCall(() =>
     sdk.ads.onBreakStart(() => {
       usePlatform.setState({ paused: true })
@@ -256,17 +265,19 @@ let screen = null
 let screenType = null
 
 /**
- * Tells Bloxity which screen is showing so it can place banners around it. Our HUD
- * keeps the top-right corner (profile and quests), so that position stays free.
- * Pass null when no listed screen is showing.
+ * Tells Bloxity which screen is showing so it can place banners around it. The game
+ * shows no ads, so it only ever calls this with null (which also hides any banner
+ * Bloxity put up by itself). Kept so ads can be brought back in one place.
  */
 export function setAdScreen(type) {
-  if (type === screenType) return
+  // null always goes through: it hides banners the portal may have shown by itself.
+  if (type && type === screenType) return
   screenType = type
   const s = sdk()
   if (!s?.ads?.screen) return
   if (!type) {
     safeCall(() => screen?.hide())
+    safeCall(() => s.ads.hideScreen?.())
     screen = null
     return
   }

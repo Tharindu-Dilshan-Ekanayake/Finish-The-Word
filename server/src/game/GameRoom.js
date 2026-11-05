@@ -22,6 +22,11 @@ const PLAYTIME_TICK_MS = 30000
 const REPLACED = 4100
 /** Close code for a player removed for being away (AFK), so their slot frees up. */
 const AWAY = 4101
+/** Close code for a player moved off a server that is shutting down: the client reconnects elsewhere. */
+const MOVING = 4102
+
+/** Every room open in this process (for draining on shutdown). */
+const liveRooms = new Set()
 /** How often everyone is checked for being away. */
 const AFK_CHECK_MS = 5000
 
@@ -61,7 +66,9 @@ class GameRoom extends Room {
     this.clock.setInterval(() => {
       const now = Date.now()
       for (const table of this.tables) table.tick(now)
+      if (this.draining) this.moveOffDuty()
     }, TICK_MS)
+    liveRooms.add(this)
     this.clock.setInterval(() => this.pushLeaderboard(), LEADERBOARD_PUSH_MS)
     this.lastPlaytimeTick = Date.now()
     this.clock.setInterval(() => this.tickPlaytime(), PLAYTIME_TICK_MS)
@@ -132,6 +139,37 @@ class GameRoom extends Room {
     if (liveByProfile.get(session.profile.id) === session) liveByProfile.delete(session.profile.id)
   }
 
+  onDispose() {
+    liveRooms.delete(this)
+  }
+
+  /**
+   * This server is shutting down (a deploy or a scale-down): nobody new comes in;
+   * everyone not in the middle of a duel moves to another server right away, and
+   * the others as soon as their duel ends (see moveOffDuty), so no game is cut short.
+   */
+  drain() {
+    this.draining = true
+    void this.lock()
+    this.moveOffDuty()
+  }
+
+  /** While draining: sends everyone not mid-duel (or watching its result) on their way. */
+  moveOffDuty() {
+    for (const session of this.sessions.values()) {
+      if (session.kicked) continue
+      const phase = session.seat?.table.phase
+      if (phase === 'playing' || phase === 'ended') continue
+      session.toast('Moving you to a fresh server…')
+      this.kick(session, MOVING)
+    }
+  }
+
+  /** Every room open in this process (for the drain on shutdown, see server.js). */
+  static get live() {
+    return liveRooms
+  }
+
   onUncaughtException(error, methodName) {
     console.error(`[game] room ${this.roomId} ${methodName} failed:`, error)
   }
@@ -164,7 +202,8 @@ class GameRoom extends Room {
 
   /**
    * Disconnects a session, including one that is mid-reconnect. `code` tells the
-   * client why: REPLACED (joined from elsewhere) or AWAY (removed for being AFK).
+   * client why: REPLACED (joined from elsewhere), AWAY (removed for being AFK) or
+   * MOVING (this server is shutting down: reconnect through the matchmaker).
    */
   kick(session, code = REPLACED) {
     session.kicked = true

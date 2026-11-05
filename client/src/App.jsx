@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 
 import { platform, setAdScreen, usePlatform } from './bloxity/platform'
-import { isPlayingPhase, useGame } from './net/gameStore'
+import { useGame } from './net/gameStore'
 import { renderStats } from './net/liveState'
 import { useConnection } from './net/useConnection'
 import Hatch from './ui/Hatch'
@@ -34,20 +34,16 @@ function FpsReadout() {
 }
 
 /**
- * Tells Bloxity which screen is showing so it can place banners around it:
- * a menu panel, the pre-duel wait/countdown ('lobby') or a duel result.
+ * No ads, ever: no banner screen is shown (and every screen is declared ad-free to
+ * Bloxity, see platform.wireAds). Re-asserted whenever a menu or the duel changes,
+ * in case the portal put one up by itself.
  */
-function useAdScreens() {
+function useNoAds() {
   const modal = useGame((s) => s.modal)
   const phase = useGame((s) => s.match?.phase)
-  const result = useGame((s) => s.result)
   useEffect(() => {
-    if (modal) setAdScreen('panel')
-    else if (result || phase === 'ended') setAdScreen('results')
-    else if (phase === 'waiting' || phase === 'countdown') setAdScreen('lobby')
-    else if (isPlayingPhase(phase)) setAdScreen('gameplay')
-    else setAdScreen(null)
-  }, [modal, phase, result])
+    setAdScreen(null)
+  }, [modal, phase])
 }
 
 /** Esc closes an open menu; otherwise, inside Bloxity, it opens Bloxity's menu. */
@@ -64,7 +60,7 @@ function useEscapeMenu() {
 
 function App() {
   useConnection()
-  useAdScreens()
+  useNoAds()
   useEscapeMenu()
   const [ready, setReady] = useState(false)
   const modal = useGame((s) => s.modal)

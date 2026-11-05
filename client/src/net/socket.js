@@ -142,19 +142,6 @@ async function listRooms() {
 }
 
 /**
- * Hosting: into the busiest room that has space, across every pod, so a new player
- * lands where people are instead of in an empty room. null when there's none.
- */
-async function joinBusiest() {
-  const rooms = (await listRooms()).filter((r) => r.open && r.players > 0).sort((a, b) => b.players - a.players)
-  for (const r of rooms.slice(0, 3)) {
-    const joined = await joinById(r.url, r.roomId)
-    if (joined) return joined
-  }
-  return null
-}
-
-/**
  * A room with clearly more real players than ours (at least two more) that has
  * space, for the "Join them" offer to someone in a quiet room. null if none.
  */
@@ -283,12 +270,10 @@ async function join() {
       deepLinkRoomId = null
       joined = await joinDeepLink(id, target)
     }
-    // Hosting: the busiest room with space on any pod. Otherwise (and as a fallback)
-    // joinOrCreate, which the server points at its busiest room with space (sortBy).
-    if (!joined && viaMatchmaker()) {
-      joined = await joinBusiest()
-      if (joined) via = null
-    }
+    // Through the endpoint just resolved: on hosting, Bloxity's matchmaker has picked
+    // the pod (it fills one to the room cap before starting the next, and keeps
+    // parties together); on that server joinOrCreate picks its busiest room with
+    // space (sortBy, see server.js).
     joined ||= await new Client(target.url).joinOrCreate(ROOM_NAME, hello)
 
     if (token !== joinToken) {

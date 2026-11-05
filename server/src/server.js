@@ -152,6 +152,27 @@ const gameServer = new Server({
 // New players go to the busiest room that still has space (rooms lock when full),
 // so players end up together instead of spread over half-empty rooms.
 gameServer.define(DATA.bloxity.roomName, GameRoom).sortBy({ clients: -1 })
+/** Hosting allows 10 minutes after SIGTERM; the drain stops a minute short of that. */
+const DRAIN_LIMIT_MS = 9 * 60 * 1000
+
+/**
+ * Zero-downtime deploys: on SIGTERM (a deploy or a scale-down) Bloxity routes new
+ * players to a fresh pod and waits. Every room sends its players to another server
+ * (they reconnect through the matchmaker on their own), except those mid-duel, who
+ * go when their duel ends; then the server shuts down. Production only: locally,
+ * Ctrl+C should stop the server at once.
+ */
+async function drainRooms() {
+  console.log(`[server] draining ${GameRoom.live.size} room(s) before shutting down`)
+  for (const room of GameRoom.live) room.drain()
+  const deadline = Date.now() + DRAIN_LIMIT_MS
+  while (Date.now() < deadline && [...GameRoom.live].some((room) => room.sessions.size > 0)) {
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+  console.log('[server] drained')
+}
+if (PRODUCTION) gameServer.onBeforeShutdown(drainRooms)
+
 // Colyseus owns SIGINT/SIGTERM: it lets every room run onLeave (which banks
 // progress) before this final save.
 gameServer.onShutdown(async () => {
