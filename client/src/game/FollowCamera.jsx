@@ -147,7 +147,7 @@ export function FollowCamera() {
 
     if (table) {
       // A winner dancing up on the table is tall: step back so they fit in frame
-      // (once the dance starts: the last slaps are watched up close). A portrait
+      // (once the dance starts: the last laughs are watched up close). A portrait
       // screen is narrow: step back so both plates fit side by side.
       const won = match.won && Date.now() >= (actionFx.get(SELF_ANCHOR)?.danceAt || 0)
       const portrait = size.height > size.width ? PORTRAIT_BACK : 0

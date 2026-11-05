@@ -11,6 +11,7 @@ import Effects from './Effects'
 import FollowCamera from './FollowCamera'
 import Halos from './Halos'
 import Lighting from './Lighting'
+import Pets from './Pets'
 import Player from './Player'
 import { useQuality, useSettings } from './quality'
 import RemotePlayers from './RemotePlayers'
@@ -239,6 +240,7 @@ export function GameScene({ onReady }) {
           <RemotePlayers />
         </Suspense>
         <Halos />
+        <Pets />
 
         {settings.particles && <Effects />}
         <FollowCamera />

@@ -1,51 +1,78 @@
 import { BufferAttribute, BufferGeometry, Color } from 'three'
 
 import {
-  CHIP_BAG,
+  BOARDWALK,
+  CROSS_PATHS,
   DATA,
+  DECK_Z,
+  DECKS,
+  EGG_SPOTS,
+  EGG_STAND,
   EMOTE_SHOP,
   FLOOR,
+  FOUNTAIN,
   GUIDE_BOARD,
+  LAMP_ROWS,
   LAMPS,
   PLANTERS,
-  PLAZA_RADIUS,
+  PLAZA,
   rotateXZ,
-  SPAWN,
+  SHOP_CHAIRS,
+  UMBRELLAS,
 } from './layout'
 
 /**
- * The snack plaza's build: the paving (one mesh) and every box-built prop (lamp
- * posts, bunting, planters, the giant chip bag, the guide board's frame), which
- * join the world's shared scenery instanced mesh: no draw calls of their own.
+ * The summer boardwalk's build: the paving (one mesh) and every box-built prop
+ * (lamp posts, bunting, planters, the pet egg stand, beach umbrellas, the guide
+ * board's frame), which join the world's shared scenery instanced mesh: no draw
+ * calls of their own.
  */
 
-const DEG = Math.PI / 180
-/** Polar -> [x, z], with angles measured from +Z (south) towards +X (east), like layout.js. */
-const polar = (r, a) => [r * Math.sin(a), r * Math.cos(a)]
+/** Polar -> [x, z] around a centre, angles from +Z (south) towards +X (east), like layout.js. */
+const polar = (cx, cz, r, a) => [cx + r * Math.sin(a), cz + r * Math.cos(a)]
 
 /* ---- Paving ---------------------------------------------------------------------- */
 
+/** Summer: sun-bleached planks, sand and pool blue, word-board tiles. */
 const PAVE = {
-  fountainRing: '#ffcf4a',
-  sunA: '#ffe9c9',
-  sunB: '#ffd7a3',
-  band: '#ec7a5c',
-  walk: '#fff3dc',
-  trim: '#caa77c',
-  path: '#fff3dc',
-  shopPad: '#d9f1ff',
-  boardPad: '#ffe1f0',
-  emotePad: '#f0e2ff',
+  plankA: '#d9a066',
+  plankB: '#c98f55',
+  rail: '#8a5a2b',
+  fountainRing: '#4fd0e8',
+  sunA: '#fff0c2',
+  sunB: '#ffd98a',
+  band: '#ff7a6b',
+  path: '#fff8e6',
+  shopPad: '#d9f6ff',
+  boardPad: '#ffe6f2',
+  emotePad: '#efe3ff',
+  eggPad: '#fff1c9',
+  grout: '#d8c7a6',
 }
 
 /**
- * The plaza floor as one flat geometry: a sunburst of warm tiles around the
- * fountain, a terracotta band, a walkway ring, the entrance path and paved pads
- * under the shops and boards. Colours are vertex colours over one shared tile
- * texture (UVs in world units / `tile`).
+ * The word-game board the tables stand on: cream squares with the odd bonus square
+ * (triple word red, double word pink, double letter light blue, triple letter blue),
+ * scattered the same way on every load.
+ */
+const TILE = { base: '#f6ead2', tw: '#ff6b6b', dw: '#ffb3c7', dl: '#a8d8ff', tl: '#4f9dff' }
+const BONUS = ['tw', 'dw', 'dw', 'dl', 'dl', 'dl', 'tl']
+function tileColor(i, j) {
+  const h = (i * 37 + j * 17 + ((i * j) % 5)) % 23
+  return TILE[BONUS[h] || 'base']
+}
+const TILE_SIZE = 1
+const PLANK = 0.6
+
+/**
+ * The floor as one flat geometry: the boardwalk's planks and rails, the round
+ * fountain plaza (pool-blue ring, sunburst, coral band), the two word-board decks
+ * under the tables, paths across to the shops and pads under the shops and boards.
+ * Colours are vertex colours over one shared tile texture (UVs in world units /
+ * `tile`).
  *
- * Pieces that overlap are stacked in layers (rings, then pads, then paths), each
- * FLOOR.plazaStep higher, so overlapping tiles never flicker against each other.
+ * Pieces that overlap are stacked in layers, each FLOOR.plazaStep higher, so
+ * overlapping pieces never flicker against each other.
  */
 export function createPlazaGeometry(tile) {
   const positions = []
@@ -69,13 +96,13 @@ export function createPlazaGeometry(tile) {
     tri(a, b, c)
     tri(a, c, d)
   }
-  /** A ring segment from angle a0 to a1 (radians), in `segments` steps. */
-  const arc = (r0, r1, a0, a1, segments, hex) => {
+  /** A ring segment round [cx, cz] from angle a0 to a1 (radians), in `segments` steps. */
+  const arc = (cx, cz, r0, r1, a0, a1, segments, hex) => {
     color.set(hex)
     for (let i = 0; i < segments; i += 1) {
       const t0 = a0 + ((a1 - a0) * i) / segments
       const t1 = a0 + ((a1 - a0) * (i + 1)) / segments
-      quad(polar(r0, t0), polar(r1, t0), polar(r1, t1), polar(r0, t1))
+      quad(polar(cx, cz, r0, t0), polar(cx, cz, r1, t0), polar(cx, cz, r1, t1), polar(cx, cz, r0, t1))
     }
   }
   const rect = (x, z, w, d, hex, ry = 0) => {
@@ -88,38 +115,56 @@ export function createPlazaGeometry(tile) {
   }
 
   const FULL = Math.PI * 2
-  // Layer 0: the rings, side by side.
+  const { x: px, z: pz, radius: pr } = PLAZA
+  const ringIn = FOUNTAIN.radius - 0.1
+  const ringOut = FOUNTAIN.radius + 0.9
+
+  // Layer 0: the fountain plaza, and pads under the shops and boards.
   layer(0)
-  arc(4.3, 5.3, 0, FULL, 48, PAVE.fountainRing)
-  // The sunburst: 20 wedges, alternating.
-  for (let i = 0; i < 20; i += 1) {
-    arc(5.3, 16.3, (i * FULL) / 20, ((i + 1) * FULL) / 20, 3, i % 2 ? PAVE.sunA : PAVE.sunB)
+  arc(px, pz, ringIn, ringOut, 0, FULL, 48, PAVE.fountainRing)
+  for (let i = 0; i < 16; i += 1) {
+    arc(px, pz, ringOut, pr - 0.5, (i * FULL) / 16, ((i + 1) * FULL) / 16, 3, i % 2 ? PAVE.sunA : PAVE.sunB)
   }
-  arc(16.3, 16.9, 0, FULL, 72, PAVE.band)
-  arc(16.9, PLAZA_RADIUS - 0.35, 0, FULL, 72, PAVE.walk)
-  arc(PLAZA_RADIUS - 0.35, PLAZA_RADIUS, 0, FULL, 72, PAVE.trim)
-
-  // Layer 1: pads under the chair shop's arc (east), the leaderboards' arc (north),
-  // the emote stall (west) and the guide board.
-  layer(1)
-  arc(21.6, 26.4, 38 * DEG, 142 * DEG, 26, PAVE.shopPad)
-  arc(22.6, 26.6, 146 * DEG, 214 * DEG, 18, PAVE.boardPad)
+  arc(px, pz, pr - 0.5, pr, 0, FULL, 64, PAVE.band)
+  const shopZ = SHOP_CHAIRS.map((c) => c.shop[1])
+  const shopX = SHOP_CHAIRS[0].shop[0]
+  rect(shopX, 0, 4.4, Math.max(...shopZ) - Math.min(...shopZ) + 3.4, PAVE.shopPad)
+  for (const lb of DATA.leaderboards) rect(lb.x, lb.z + 0.3, 7.4, 2.4, PAVE.boardPad, lb.ry)
   rect(EMOTE_SHOP.x + 0.6, EMOTE_SHOP.z, 6.2, 8.4, PAVE.emotePad)
-  rect(GUIDE_BOARD.x, GUIDE_BOARD.z, 6.6, 2.6, PAVE.walk, GUIDE_BOARD.ry)
+  rect(GUIDE_BOARD.x, GUIDE_BOARD.z, 6.6, 2.6, PAVE.path, GUIDE_BOARD.ry)
+  rect(EGG_STAND.x, EGG_STAND.z + 0.3, 5.6, 3.2, PAVE.eggPad, EGG_STAND.ry)
 
-  // Layer 2: the entrance path from the spawn point (its terracotta edges beside
-  // it, not over it) and the spokes joining the pads to the walkway.
+  // Layer 1: grout under the deck tiles, and the boardwalk's dark rails.
+  layer(1)
+  const [z0, z1] = DECK_Z
+  for (const [x0, x1] of DECKS) rect((x0 + x1) / 2, (z0 + z1) / 2, x1 - x0 + 0.1, z1 - z0 + 0.1, PAVE.grout)
+  const walkLen = BOARDWALK.south - BOARDWALK.north
+  const walkMid = (BOARDWALK.south + BOARDWALK.north) / 2
+  for (const side of [-1, 1]) rect(side * (BOARDWALK.halfWidth + 0.15), walkMid, 0.3, walkLen, PAVE.rail)
+
+  // Layer 2: the deck tiles, and the planks across the boardwalk.
   layer(2)
-  const pathStart = PLAZA_RADIUS - 0.4
-  const pathEnd = SPAWN[2] + 3
-  const pathMid = (pathStart + pathEnd) / 2
-  const pathLen = pathEnd - pathStart
-  rect(0, pathMid, 4.8, pathLen, PAVE.path)
-  rect(-2.6, pathMid, 0.4, pathLen, PAVE.band)
-  rect(2.6, pathMid, 0.4, pathLen, PAVE.band)
-  rect(20.1, 0, 3.4, 3.2, PAVE.walk)
-  rect(0, -20.6, 3.2, 4.4, PAVE.walk)
-  rect(-19.9, 0, 3.4, 3.2, PAVE.walk)
+  DECKS.forEach(([x0, x1], d) => {
+    for (let i = 0; x0 + i * TILE_SIZE < x1 - 0.01; i += 1) {
+      for (let j = 0; z0 + j * TILE_SIZE < z1 - 0.01; j += 1) {
+        const cx = x0 + (i + 0.5) * TILE_SIZE
+        const cz = z0 + (j + 0.5) * TILE_SIZE
+        rect(cx, cz, TILE_SIZE - 0.08, TILE_SIZE - 0.08, tileColor(i + d * 7, j))
+      }
+    }
+  })
+  let k = 0
+  for (let z = BOARDWALK.north; z < BOARDWALK.south - 0.01; z += PLANK) {
+    rect(0, z + PLANK / 2, BOARDWALK.halfWidth * 2, PLANK, k % 2 ? PAVE.plankA : PAVE.plankB)
+    k += 1
+  }
+
+  // Layer 3: paths across the decks to the shops, through the gaps between tables.
+  layer(3)
+  for (const [z, toX] of CROSS_PATHS) {
+    const from = Math.sign(toX) * (BOARDWALK.halfWidth + 0.3)
+    rect((from + toX) / 2, z, Math.abs(toX - from), 1.3, PAVE.path)
+  }
 
   const position = new Float32Array(positions)
   const uv = new Float32Array((position.length / 3) * 2)
@@ -164,12 +209,21 @@ function lampBoxes() {
   return boxes
 }
 
-/** Strings of little flags hung between neighbouring lamp posts, sagging a little. */
+/**
+ * Every string of bunting: across the boardwalk between each facing pair of lamp
+ * posts, and along each side from post to post.
+ */
+function buntingLines() {
+  const [west, east] = LAMP_ROWS
+  const lines = west.map((a, k) => [a, east[k]])
+  for (const row of LAMP_ROWS) for (let k = 0; k + 1 < row.length; k += 1) lines.push([row[k], row[k + 1]])
+  return lines
+}
+
+/** Strings of little flags hung between lamp posts, sagging a little. */
 function buntingBoxes() {
   const boxes = []
-  for (let k = 0; k + 1 < LAMPS.length; k += 1) {
-    const [ax, az] = LAMPS[k]
-    const [bx, bz] = LAMPS[k + 1]
+  buntingLines().forEach(([[ax, az], [bx, bz]], k) => {
     const dx = bx - ax
     const dz = bz - az
     const len = Math.hypot(dx, dz)
@@ -185,7 +239,7 @@ function buntingBoxes() {
       const [x, y, z] = at((i + 0.5) / flags)
       boxes.push({ p: [x, y - 0.2, z], s: [0.32, 0.36, 0.03], c: BUNTING[(i + k) % BUNTING.length], ry })
     }
-  }
+  })
   return boxes
 }
 
@@ -207,21 +261,66 @@ function planterBoxes() {
   return boxes
 }
 
-/** A giant bag of chips, burst open at the top: the plaza's photo spot. */
-function chipBagBoxes() {
-  const { x, z } = CHIP_BAG
-  return [
-    { p: [x, 0.12, z], s: [2.9, 0.24, 2.0], c: '#f2e6d0' },
-    { p: [x, 1.6, z], s: [2.3, 2.75, 1.3], c: '#e8343c' },
-    { p: [x, 3.06, z], s: [2.4, 0.2, 0.5], c: '#b8222a' },
-    { p: [x, 1.75, z + 0.66], s: [1.6, 1.25, 0.05], c: '#ffd23d' },
-    { p: [x, 1.75, z + 0.69], s: [1.1, 0.75, 0.05], c: '#fff3c4' },
-    { p: [x, 0.55, z + 0.66], s: [2.3, 0.22, 0.05], c: '#ffffff' },
-    // Chips spilling out of the top.
-    { p: [x - 0.55, 3.35, z], s: [0.75, 0.55, 0.1], c: '#f7c43f', ry: 0.4 },
-    { p: [x + 0.1, 3.5, z + 0.1], s: [0.8, 0.6, 0.1], c: '#f9cc4f', ry: -0.3 },
-    { p: [x + 0.65, 3.3, z - 0.1], s: [0.7, 0.5, 0.1], c: '#f3bb34', ry: 1.1 },
+/** Boxes given in a prop's own frame ([lx, y, lz], turned by `ry` about [x, z]). */
+function placed({ x, z, ry }, parts) {
+  return parts.map(([[lx, y, lz], s, c]) => {
+    const [dx, dz] = rotateXZ(lx, lz, ry)
+    return { p: [x + dx, y, z + dz], s, c, ry }
+  })
+}
+
+/** Where each egg's pedestal top is (the eggs themselves are drawn by EggStand). */
+export const EGG_PEDESTAL_Y = 0.6
+
+/**
+ * The pet egg stand: a little beach hut with a striped awning, its counter between
+ * two pedestals, one per egg (each trimmed in its egg's colour).
+ */
+function eggStandBoxes() {
+  const parts = [
+    // Counter: a blue body, a sandy top and a white kick strip.
+    [[0, 0.5, 0], [1.6, 1.0, 0.8], '#4fc3ff'],
+    [[0, 1.05, 0.02], [1.75, 0.1, 0.92], '#fff3dc'],
+    [[0, 0.08, 0.41], [1.6, 0.16, 0.04], '#ffffff'],
+    // Posts and a back board.
+    [[-0.75, 1.5, -0.35], [0.14, 3.0, 0.14], '#ffffff'],
+    [[0.75, 1.5, -0.35], [0.14, 3.0, 0.14], '#ffffff'],
+    [[0, 1.9, -0.38], [1.4, 1.5, 0.08], '#ffe6a8'],
   ]
+  // A striped awning, sloping down towards the front.
+  for (let k = 0; k < 6; k += 1) {
+    parts.push([[-0.95 + k * 0.38, 3.0, 0.1], [0.38, 0.1, 1.3], k % 2 ? '#ffffff' : '#ff6b9a'])
+  }
+  parts.push([[0, 2.92, 0.78], [2.3, 0.22, 0.06], '#ff6b9a'])
+  DATA.eggs.forEach((egg, k) => {
+    const [lx, lz] = EGG_SPOTS[k]
+    parts.push([[lx, 0.25, lz], [0.9, 0.5, 0.9], '#b9bec6'])
+    parts.push([[lx, EGG_PEDESTAL_Y - 0.05, lz], [0.8, 0.1, 0.8], egg.spot])
+  })
+  return placed(EGG_STAND, parts)
+}
+
+const UMBRELLA_COLORS = ['#ff4f5e', '#4fc3ff', '#ffcf4a']
+const TOWEL_COLORS = ['#7ddf5a', '#ff8ad8', '#4fc3ff']
+
+/** A beach umbrella (stepped canopy, white bands) over a striped towel. */
+function umbrellaBoxes() {
+  const boxes = []
+  UMBRELLAS.forEach(([x, z], k) => {
+    const c = UMBRELLA_COLORS[k % UMBRELLA_COLORS.length]
+    const towel = TOWEL_COLORS[k % TOWEL_COLORS.length]
+    boxes.push(
+      { p: [x, 1.4, z], s: [0.1, 2.8, 0.1], c: '#ffffff' },
+      { p: [x, 2.62, z], s: [2.6, 0.12, 2.6], c, ry: k * 0.5 },
+      { p: [x, 2.74, z], s: [2.0, 0.12, 2.0], c: '#ffffff', ry: k * 0.5 },
+      { p: [x, 2.86, z], s: [1.3, 0.12, 1.3], c, ry: k * 0.5 },
+      { p: [x, 2.98, z], s: [0.5, 0.12, 0.5], c: '#ffffff', ry: k * 0.5 },
+      // The towel lies just clear of the grass, a white stripe across it.
+      { p: [x + 0.9, 0.02, z + 0.3], s: [1.0, 0.04, 1.9], c: towel, ry: 0.3 },
+      { p: [x + 0.9, 0.03, z + 0.3], s: [1.02, 0.06, 0.25], c: '#ffffff', ry: 0.3 },
+    )
+  })
+  return boxes
 }
 
 /** The guide board's posts and frame; its face is drawn by GuideBoard. */
@@ -247,19 +346,13 @@ function guideFrameBoxes() {
 
 /** Every prop box of the plaza, for the scenery mesh. */
 export function lobbyBoxes() {
-  return [...lampBoxes(), ...buntingBoxes(), ...planterBoxes(), ...chipBagBoxes(), ...guideFrameBoxes()]
+  return [
+    ...lampBoxes(),
+    ...buntingBoxes(),
+    ...planterBoxes(),
+    ...eggStandBoxes(),
+    ...umbrellaBoxes(),
+    ...guideFrameBoxes(),
+  ]
 }
 
-/** Rug colours cycled around the ring of tables. */
-export const RUG_COLORS = ['#e85d5d', '#f2a93b', '#4aa3df', '#9b6bd6', '#3cb878']
-
-/** A rug under each table and its two chairs, turned with it. */
-export const RUG_ITEMS = DATA.tables.map((t, i) => {
-  const [dx, dz] = rotateXZ(0, 0.45, t.ry)
-  return {
-    p: [t.x + dx, FLOOR.rug, t.z + dz],
-    s: [DATA.table.width + 2.2, 1, DATA.table.depth + 3.2],
-    ry: t.ry,
-    c: RUG_COLORS[i % RUG_COLORS.length],
-  }
-})

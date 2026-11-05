@@ -12,7 +12,7 @@
  */
 
 import { usePlatform } from '../bloxity/platform'
-import { SLAP_IMPACT_MS } from '../game/seatPose'
+import { FAINT_DELAY_MS } from '../game/seatPose'
 
 /** Loudest the mix gets at volume 100. */
 const MAX_GAIN = 0.9
@@ -202,6 +202,40 @@ function thump(start, freq, gain) {
   noise(start, 0.06, { freq: 900, q: 0.7, gain: gain * 0.35 })
 }
 
+/**
+ * One cartoon "ha": a buzzy voice through an "ah" vowel (two formant band-passes),
+ * its pitch dropping, with a breathy "h" in front.
+ */
+function ha(start, freq, gain) {
+  const t = ctx.currentTime + start
+  const dur = 0.15
+  noise(start, 0.05, { freq: 1600, q: 0.8, gain: gain * 0.45 })
+  const osc = ctx.createOscillator()
+  osc.type = 'sawtooth'
+  osc.frequency.setValueAtTime(freq * 1.06, t + 0.02)
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.82, t + dur)
+  const amp = ctx.createGain()
+  amp.gain.setValueAtTime(0.0001, t)
+  amp.gain.exponentialRampToValueAtTime(gain, t + 0.035)
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+  for (const [f, q] of [
+    [800, 5],
+    [1250, 6],
+  ]) {
+    const formant = ctx.createBiquadFilter()
+    formant.type = 'bandpass'
+    formant.frequency.value = f
+    formant.Q.value = q
+    osc.connect(formant).connect(amp)
+  }
+  amp.connect(sfxBus)
+  const send = ctx.createGain()
+  send.gain.value = 0.25
+  amp.connect(send).connect(reverbIn)
+  osc.start(t)
+  osc.stop(t + dur + 0.05)
+}
+
 const NOTE = (semitonesFromA4) => 440 * Math.pow(2, semitonesFromA4 / 12)
 const C4 = NOTE(-9)
 const E4 = NOTE(-5)
@@ -287,28 +321,33 @@ export const sfx = {
       thump(t, 150 + i * 6, 0.05 + i * 0.012)
     }
   }),
-  /** A safe chip: three crisp crunches and a happy little "mm". */
-  crunch: play(() => {
-    for (const [t, f] of [[0, 3200], [0.09, 2600], [0.2, 3600]]) {
-      noise(t, 0.06, { freq: f, q: 1.4, gain: 0.32 })
-      noise(t, 0.03, { filter: 'highpass', freq: 6000, gain: 0.08 })
+  /** A word accepted: two quick typewriter keys and a bright "ding". */
+  word: play(() => {
+    for (const t of [0, 0.07]) {
+      noise(t, 0.035, { freq: 3800, q: 2.5, gain: 0.22 })
+      thump(t, 420, 0.05)
     }
-    bell(E5, 0.32, 0.25, 0.08)
-    bell(G5, 0.4, 0.4, 0.09)
+    bell(E6, 0.15, 0.5, 0.13)
   }),
-  /** SLAP: a whoosh as the hand swings in, then a sharp smack with a thud under it. */
-  slap: play(() => {
-    const hit = SLAP_IMPACT_MS / 1000
-    noise(hit - 0.2, 0.2, { freq: 500, freqEnd: 2600, q: 0.9, gain: 0.07 })
-    noise(hit, 0.09, { freq: 2400, q: 0.6, gain: 0.55, reverb: 0.25 })
-    noise(hit, 0.04, { filter: 'highpass', freq: 5000, gain: 0.25 })
-    thump(hit, 140, 0.3)
-    // A cartoon "boing" as the head snaps aside.
-    voice(520, hit + 0.08, 0.3, { type: 'triangle', glide: 180, gain: 0.08, vibrato: 30 })
+  /** Someone ran out of time: the other player's cartoon "HA-HA-HA-HA", each lower. */
+  laugh: play(() => {
+    ;[330, 315, 296, 280, 262].forEach((f, i) => ha(i * 0.16, f, 0.2 - i * 0.015))
   }),
-  /** Golden chip: a crunch, then a magical sparkle. */
+  /** You ran out of time: a deflating "bwoomp". */
+  oops: play(() => {
+    voice(330, 0, 0.45, { type: 'triangle', glide: 110, gain: 0.12, vibrato: 12 })
+    voice(165, 0.02, 0.45, { type: 'sine', glide: 70, gain: 0.08 })
+  }),
+  /** Fainting: a slide whistle all the way down, then a thud on the floor. */
+  faint: play(() => {
+    const start = FAINT_DELAY_MS / 1000
+    voice(1400, start - 0.25, 0.8, { type: 'sine', glide: 220, gain: 0.1, vibrato: 18 })
+    thump(start + 0.7, 95, 0.32)
+    noise(start + 0.7, 0.12, { freq: 400, q: 0.6, gain: 0.12 })
+  }),
+  /** A big word (or lucky letter): a ding, then a magical sparkle. */
   golden: play(() => {
-    noise(0, 0.06, { freq: 3200, q: 1.4, gain: 0.28 })
+    bell(E6, 0, 0.3, 0.12)
     ;[C6, E6, G6, C7, E6, C7].forEach((f, i) => bell(f, 0.12 + i * 0.06, 0.6, 0.11))
     noise(0.12, 0.6, { filter: 'highpass', freq: 7000, freqEnd: 11000, gain: 0.04, reverb: 0.6 })
   }),

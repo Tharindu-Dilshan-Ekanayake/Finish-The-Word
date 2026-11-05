@@ -1,1 +1,6 @@
-data/
+# Local dev profiles live here; the word lists are part of the game.
+data/*
+!data/words.txt
+!data/profanity.txt
+!data/profanity-extra.txt
+!data/common.txt

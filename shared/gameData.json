@@ -1,6 +1,6 @@
 {
   "bloxity": {
-    "gameSlug": "slap-chips",
+    "gameSlug": "finish-the-word",
     "roomName": "game",
     "leaderboards": [
       {
@@ -37,27 +37,95 @@
       }
     ]
   },
-  "roomSize": 20,
-  "chips": {
-    "cols": 3,
-    "rows": 3,
-    "slaps": 3,
-    "hearts": 3,
-    "goldenCash": 50
+  "roomSize": 30,
+  "afk": {
+    "warnSec": 60,
+    "kickSec": 90
   },
+  "words": {
+    "minLength": 3,
+    "hearts": 3,
+    "bonusLength": 8,
+    "bonusCash": 25,
+    "startLetters": "abcdefghilmnoprstw",
+    "chainShown": 12
+  },
+  "bot": {
+    "name": "WordBot",
+    "thinkMin": 1.8,
+    "thinkMax": 4.5,
+    "missBase": 0.07,
+    "missPerWord": 0.012,
+    "missHard": 0.3,
+    "missMax": 0.65,
+    "hardLetters": "jqvxyzk",
+    "rewardRate": 0.5
+  },
+  "lucky": {
+    "letters": "adeghklmnoprsty",
+    "cash": 15
+  },
+  "wordBook": {
+    "max": 5000,
+    "recent": 24,
+    "milestones": [
+      { "at": 10, "cash": 150 },
+      { "at": 25, "cash": 300 },
+      { "at": 50, "cash": 600 },
+      { "at": 100, "cash": 1000 },
+      { "at": 200, "cash": 1600 },
+      { "at": 350, "cash": 2500 },
+      { "at": 500, "cash": 3500 },
+      { "at": 750, "cash": 5000 },
+      { "at": 1000, "cash": 7500 }
+    ]
+  },
+  "eggs": [
+    {
+      "id": "beach",
+      "name": "Beach Egg",
+      "price": 750,
+      "color": "#ffd27a",
+      "spot": "#4fc3ff",
+      "odds": [["crab", 34], ["turtle", 30], ["bunny", 22], ["parrot", 11], ["puppy", 3]]
+    },
+    {
+      "id": "sunset",
+      "name": "Sunset Egg",
+      "price": 3000,
+      "color": "#ff8a5c",
+      "spot": "#ffe14d",
+      "odds": [["cat", 38], ["owl", 30], ["fox", 22], ["dragon", 8], ["unicorn", 2]]
+    }
+  ],
+  "petDupRefund": 0.4,
+  "pets": [
+    { "id": "crab", "name": "Sandy Crab", "icon": "🦀", "rarity": "common", "kind": "crab", "colors": ["#ff5a3d", "#ffb199"], "cash": 10 },
+    { "id": "turtle", "name": "Slow Turtle", "icon": "🐢", "rarity": "common", "kind": "turtle", "colors": ["#4fbf5a", "#8a5a2b"], "time": 1 },
+    { "id": "bunny", "name": "Beach Bunny", "icon": "🐰", "rarity": "uncommon", "kind": "pup", "ears": "long", "colors": ["#ffffff", "#ffb6d0"], "time": 1, "cash": 10 },
+    { "id": "parrot", "name": "Clever Parrot", "icon": "🦜", "rarity": "rare", "kind": "bird", "colors": ["#2fd14f", "#ff4a3d"], "hints": 1 },
+    { "id": "puppy", "name": "Guard Puppy", "icon": "🐶", "rarity": "epic", "kind": "pup", "ears": "flop", "colors": ["#c98a4b", "#ffe1b8"], "time": 1, "shields": 1 },
+    { "id": "cat", "name": "Sun Cat", "icon": "🐱", "rarity": "uncommon", "kind": "pup", "ears": "point", "colors": ["#ffa53d", "#fff1d6"], "time": 2 },
+    { "id": "owl", "name": "Wise Owl", "icon": "🦉", "rarity": "rare", "kind": "bird", "colors": ["#8a6a4a", "#ffe1a8"], "hints": 2 },
+    { "id": "fox", "name": "Quick Fox", "icon": "🦊", "rarity": "epic", "kind": "pup", "ears": "point", "colors": ["#ff7a1f", "#ffffff"], "time": 2, "hints": 1 },
+    { "id": "dragon", "name": "Word Dragon", "icon": "🐉", "rarity": "legendary", "kind": "dragon", "colors": ["#8a3dff", "#ffd23d"], "time": 2, "hints": 1, "shields": 1 },
+    { "id": "unicorn", "name": "Rainbow Unicorn", "icon": "🦄", "rarity": "mythic", "kind": "pup", "ears": "point", "horn": true, "colors": ["#ffffff", "#ff7fd8"], "time": 3, "hints": 2, "shields": 1, "cash": 25 }
+  ],
   "forfeit": {
     "penalty": 50,
-    "slaps": 3,
-    "slapFirst": 0.4,
-    "slapGap": 1.05
+    "laughs": 2,
+    "laughFirst": 0.3,
+    "laughGap": 1.7
   },
   "winReward": 200,
   "timing": {
     "countdown": 3,
-    "hide": 20,
-    "turn": 12,
+    "pairSec": 6,
+    "turn": 15,
+    "turnMin": 6,
+    "turnStep": 0.3,
+    "failPause": 1.6,
     "results": 5,
-    "bite": 1.1,
     "loserRespawn": 3.6
   },
   "world": {
@@ -70,54 +138,59 @@
     "height": 0.82,
     "seatX": 0.9,
     "seatZ": 1.2,
-    "sitRange": 4
+    "sitRange": 6
   },
   "tables": [
-    { "id": 1, "x": 3.86, "z": 11.89, "ry": -2.8274 },
-    { "id": 2, "x": 10.11, "z": 7.35, "ry": -2.1991 },
-    { "id": 3, "x": 12.5, "z": 0, "ry": -1.5708 },
-    { "id": 4, "x": 10.11, "z": -7.35, "ry": -0.9425 },
-    { "id": 5, "x": 3.86, "z": -11.89, "ry": -0.3142 },
-    { "id": 6, "x": -3.86, "z": -11.89, "ry": 0.3142 },
-    { "id": 7, "x": -10.11, "z": -7.35, "ry": 0.9425 },
-    { "id": 8, "x": -12.5, "z": 0, "ry": 1.5708 },
-    { "id": 9, "x": -10.11, "z": 7.35, "ry": 2.1991 },
-    { "id": 10, "x": -3.86, "z": 11.89, "ry": 2.8274 }
+    { "id": 1, "x": 7.5, "z": 14.7, "ry": -1.5708 },
+    { "id": 2, "x": 7.5, "z": 9.8, "ry": -1.5708 },
+    { "id": 3, "x": 7.5, "z": 4.9, "ry": -1.5708 },
+    { "id": 4, "x": 7.5, "z": 0, "ry": -1.5708 },
+    { "id": 5, "x": 7.5, "z": -4.9, "ry": -1.5708 },
+    { "id": 6, "x": 7.5, "z": -9.8, "ry": -1.5708 },
+    { "id": 7, "x": 7.5, "z": -14.7, "ry": -1.5708 },
+    { "id": 8, "x": -7.5, "z": -14.7, "ry": 1.5708 },
+    { "id": 9, "x": -7.5, "z": -9.8, "ry": 1.5708 },
+    { "id": 10, "x": -7.5, "z": -4.9, "ry": 1.5708 },
+    { "id": 11, "x": -7.5, "z": 0, "ry": 1.5708 },
+    { "id": 12, "x": -7.5, "z": 4.9, "ry": 1.5708 },
+    { "id": 13, "x": -7.5, "z": 9.8, "ry": 1.5708 },
+    { "id": 14, "x": -7.5, "z": 14.7, "ry": 1.5708 },
+    { "id": 15, "x": 0, "z": -12.2, "ry": 3.1416, "stage": true }
   ],
   "leaderboards": [
     {
       "id": "levels",
       "title": "TOP LEVELS ⭐",
       "format": "level",
-      "x": 11.12,
-      "z": -21.83,
-      "ry": -0.4712
+      "x": 17.5,
+      "z": -22,
+      "ry": -0.9
     },
     {
       "id": "streaks",
       "title": "TOP STREAKS 🔥",
-      "x": 3.83,
-      "z": -24.2,
-      "ry": -0.1571
+      "x": 9.5,
+      "z": -27,
+      "ry": -0.45
     },
     {
       "id": "wins",
       "title": "TOP WINS 🏆",
-      "x": -3.83,
-      "z": -24.2,
-      "ry": 0.1571
+      "x": -9.5,
+      "z": -27,
+      "ry": 0.45
     },
     {
       "id": "playtime",
       "title": "MOST PLAYED ⏱️",
       "format": "duration",
-      "x": -11.12,
-      "z": -21.83,
-      "ry": 0.4712
+      "x": -17.5,
+      "z": -22,
+      "ry": 0.9
     }
   ],
   "emoteShop": {
-    "x": -24,
+    "x": -19.5,
     "z": 0
   },
   "chairs": [
@@ -134,7 +207,7 @@
       "rarity": "common",
       "price": 100,
       "color": "#8a96a8",
-      "shop": [16.97, 16.97]
+      "shop": [19, 13.5]
     },
     {
       "id": "picnic",
@@ -142,7 +215,7 @@
       "rarity": "common",
       "price": 300,
       "color": "#e8504a",
-      "shop": [19.66, 13.77]
+      "shop": [19, 10.5]
     },
     {
       "id": "nature",
@@ -150,7 +223,7 @@
       "rarity": "uncommon",
       "price": 800,
       "color": "#2fd14f",
-      "shop": [21.75, 10.14]
+      "shop": [19, 7.5]
     },
     {
       "id": "candy",
@@ -158,7 +231,7 @@
       "rarity": "uncommon",
       "price": 1200,
       "color": "#ff7fc8",
-      "shop": [23.18, 6.21]
+      "shop": [19, 4.5]
     },
     {
       "id": "storm",
@@ -166,7 +239,7 @@
       "rarity": "rare",
       "price": 2000,
       "color": "#7fe3ff",
-      "shop": [23.91, 2.09]
+      "shop": [19, 1.5]
     },
     {
       "id": "ocean",
@@ -174,7 +247,7 @@
       "rarity": "rare",
       "price": 3000,
       "color": "#2f7dff",
-      "shop": [23.91, -2.09]
+      "shop": [19, -1.5]
     },
     {
       "id": "lava",
@@ -182,7 +255,7 @@
       "rarity": "epic",
       "price": 5000,
       "color": "#ff5a1f",
-      "shop": [23.18, -6.21]
+      "shop": [19, -4.5]
     },
     {
       "id": "golden",
@@ -191,7 +264,7 @@
       "price": 9000,
       "color": "#ffc93d",
       "style": "throne",
-      "shop": [21.75, -10.14]
+      "shop": [19, -7.5]
     },
     {
       "id": "void",
@@ -200,7 +273,7 @@
       "price": 16000,
       "color": "#9b3dff",
       "style": "throne",
-      "shop": [19.66, -13.77]
+      "shop": [19, -10.5]
     },
     {
       "id": "diamond",
@@ -209,7 +282,7 @@
       "price": 30000,
       "color": "#8ff4ff",
       "style": "throne",
-      "shop": [16.97, -16.97]
+      "shop": [19, -13.5]
     }
   ],
   "emotes": [
@@ -317,8 +390,8 @@
     },
     {
       "id": "crunchy",
-      "label": "SO CRUNCHY",
-      "icon": "🥔",
+      "label": "BIG WORD",
+      "icon": "📚",
       "price": 1200
     },
     {
@@ -403,18 +476,39 @@
       "reward": 900
     },
     {
-      "id": "crunch10",
-      "label": "Eat 10 Safe Chips",
-      "event": "crunch",
-      "goal": 10,
+      "id": "words15",
+      "label": "Say 15 Words",
+      "event": "word",
+      "goal": 15,
       "reward": 400
     },
     {
-      "id": "golden1",
-      "label": "Find A Golden Chip",
-      "event": "golden",
+      "id": "longword1",
+      "label": "Use A Word With 8+ Letters",
+      "event": "longword",
       "goal": 1,
       "reward": 600
+    },
+    {
+      "id": "lucky2",
+      "label": "Play 2 Lucky Letter Words",
+      "event": "lucky",
+      "goal": 2,
+      "reward": 500
+    },
+    {
+      "id": "newwords10",
+      "label": "Add 10 New Words To Your Word Book",
+      "event": "newword",
+      "goal": 10,
+      "reward": 500
+    },
+    {
+      "id": "hatch1",
+      "label": "Hatch A Pet Egg",
+      "event": "hatch",
+      "goal": 1,
+      "reward": 400
     },
     {
       "id": "emote5",
@@ -510,25 +604,25 @@
   "titles": [
     {
       "id": "t_rookie",
-      "name": "Chip Rookie",
+      "name": "Word Rookie",
       "color": "#c8d0dc",
       "level": 5
     },
     {
       "id": "t_ninja",
-      "name": "Crunch Ninja",
+      "name": "Spelling Ninja",
       "color": "#5cff5c",
       "level": 10
     },
     {
       "id": "t_reader",
-      "name": "Slap Dodger",
+      "name": "Word Wizard",
       "color": "#4fd8ff",
       "level": 20
     },
     {
       "id": "t_master",
-      "name": "Chip Master",
+      "name": "Chain Master",
       "color": "#ffb21e",
       "level": 35
     },
@@ -540,28 +634,28 @@
     },
     {
       "id": "t_lucky",
-      "name": "Lucky Muncher",
+      "name": "Lucky Speller",
       "color": "#7dff3a",
       "price": 500,
       "rarity": "common"
     },
     {
       "id": "t_brain",
-      "name": "Snack Attack",
+      "name": "Big Brain",
       "color": "#ff7fc8",
       "price": 2000,
       "rarity": "uncommon"
     },
     {
       "id": "t_pro",
-      "name": "Iron Cheeks",
+      "name": "Walking Dictionary",
       "color": "#2f9bff",
       "price": 4000,
       "rarity": "rare"
     },
     {
       "id": "t_psychic",
-      "name": "Slap Psychic",
+      "name": "Word Psychic",
       "color": "#b44dff",
       "price": 10000,
       "rarity": "epic"

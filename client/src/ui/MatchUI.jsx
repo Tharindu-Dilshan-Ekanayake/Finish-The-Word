@@ -1,15 +1,19 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { sfx } from '../audio/sfx'
-import { chipAction, lockInSlaps, randomDraft, tapChip } from '../game/chipActions'
-import { CELLS, CHIPS, DATA, emoteById, titleById } from '../game/layout'
+import { DATA, emoteById, titleById } from '../game/layout'
 import { useGame } from '../net/gameStore'
 import { bubbles } from '../net/liveState'
 import { send } from '../net/api'
 import { money, useNow } from './format'
 
+const W = DATA.words
+/** Longest word in the dictionary; the server refuses anything longer anyway. */
+const MAX_WORD = 28
+/** The opponent's "typing…" dots are updated at most this often. */
+const TYPING_EVERY_MS = 120
+
 const secondsLeft = (endsAt, now) => Math.max(0, Math.ceil((endsAt - now) / 1000))
-const CELL_LIST = Array.from({ length: CELLS }, (_, i) => i)
 
 /**
  * Big centre text (countdown, result), below the VS bar and above the players' heads.
@@ -43,7 +47,7 @@ function LeaveButton({ label = 'Leave', forfeit = false }) {
 /**
  * "Quit the duel?" in the middle of the screen, in the game's own style (not the
  * browser's confirm box). Quitting is a loss: you pay up to DATA.forfeit.penalty to
- * your opponent and they slap you before you go. Esc or a tap outside keeps playing.
+ * your opponent and they laugh you out of your chair. Esc or a tap outside keeps playing.
  */
 function QuitDialog() {
   const cash = useGame((s) => s.profile?.cash ?? 0)
@@ -89,7 +93,7 @@ function QuitDialog() {
               <span className="font-bold text-[#ff8a8a]">plus {money(pay)} of your cash</span>,{' '}
             </>
           )}
-          and gets to slap you {DATA.forfeit.slaps} times before you go! 🖐️
+          and gets to laugh at you before you go! 🤣
         </p>
         <div className="mt-1 flex w-full gap-2">
           <button
@@ -113,16 +117,16 @@ function QuitDialog() {
   )
 }
 
-/** ❤️❤️❤️ / ❤️❤️💔: one heart per slap hidden on the other plate. */
-function Hearts({ hearts = CHIPS.hearts, className = '' }) {
+/** ❤️❤️❤️ / ❤️❤️💔: a heart is lost every time you run out of time. */
+function Hearts({ hearts = W.hearts, className = '' }) {
   return (
     <span className={`whitespace-nowrap leading-none ${className}`}>
-      {Array.from({ length: CHIPS.hearts }, (_, i) => (i < hearts ? '❤️' : '💔')).join('')}
+      {Array.from({ length: W.hearts }, (_, i) => (i < hearts ? '❤️' : '💔')).join('')}
     </span>
   )
 }
 
-/** What a duelist last said (an emote, "Crunch! 😋", "OUCH! 😵"), while it lasts. */
+/** What a duelist last said (an emote, their word, "OUCH! 😵"), while it lasts. */
 function speechOf(id, now) {
   const b = id ? bubbles.get(id) : null
   return b && b.text && b.until > now ? b.text : null
@@ -131,7 +135,7 @@ function speechOf(id, now) {
 /**
  * One side of the VS bar: title, name, hearts, and a speech bubble underneath.
  * `turn`: 'active' (their go: glowing, with a TURN tab) or 'idle' (the other
- * player's go: faded), or null outside the eating phase.
+ * player's go: faded), or null outside a turn.
  */
 function DuelistCard({ player, isSelf, turn, hearts, speech, align }) {
   const title = titleById(player?.title)
@@ -171,7 +175,7 @@ function DuelistCard({ player, isSelf, turn, hearts, speech, align }) {
       {speech && (
         <div
           key={speech}
-          className={`speech pop-in max-w-full rounded-xl border-2 border-black/70 bg-white px-2 py-0.5 text-sm font-bold leading-snug text-[#1d2433] ${
+          className={`speech pop-in max-w-full truncate rounded-xl border-2 border-black/70 bg-white px-2 py-0.5 text-sm font-bold leading-snug text-[#1d2433] ${
             align === 'left' ? 'speech-left' : 'speech-right'
           }`}
         >
@@ -183,9 +187,66 @@ function DuelistCard({ player, isSelf, turn, hearts, speech, align }) {
 }
 
 /**
- * Top of the screen during a duel: opponent | timer + what's happening | you. The
- * sides match where each player sits on screen (seat 0 is on the right of the duel
- * camera), and what each one says shows under their card instead of over their heads.
+ * A word in the chain: its last letter (the next word's first) lit up, and a NEW
+ * tag on yours that just went into your Word Book.
+ */
+function ChainWord({ word, mine, latest, fresh }) {
+  const up = word.toUpperCase()
+  return (
+    <span
+      className={`chain-word relative ${latest ? 'pop-in' : 'opacity-80'} shrink-0 rounded-lg border-2 border-black/60 px-1.5 py-0.5 text-sm font-bold leading-none text-white ${
+        mine ? 'bg-[#2a6bff]' : 'bg-[#e0502e]'
+      }`}
+    >
+      <span className="stroke-thin">{up.slice(0, -1)}</span>
+      <span className="stroke-thin text-[#ffe23d]">{up.slice(-1)}</span>
+      {fresh && (
+        <span className="absolute -right-1.5 -top-2 rounded bg-[#5dff7a] px-0.5 text-[0.5rem] leading-tight text-[#0d3a1c]">
+          NEW
+        </span>
+      )}
+    </span>
+  )
+}
+
+/**
+ * The chain so far, newest on the right; older words slide off the left edge.
+ * POODLE → ELEPHANT → TURTLE
+ */
+function ChainStrip({ match }) {
+  const freshWords = useGame((s) => s.freshWords)
+  if (!match.chain.length) {
+    return (
+      <div className="ui-panel px-3 py-1 text-xs font-bold text-white/80">
+        Say a word that starts with the letter. Then they go from YOUR last letter!
+      </div>
+    )
+  }
+  // Centred while it fits; once it doesn't, the inner row is capped at full width
+  // and, pinned to its end, clips the oldest words off the left.
+  return (
+    <div className="flex w-full justify-center">
+      <div className={`flex min-w-0 max-w-full items-center justify-end gap-1 overflow-hidden ${match.words > 4 ? 'chain-strip' : ''}`}>
+        {match.chain.map((c, k) => (
+          <span key={`${match.words - match.chain.length + k}`} className="flex shrink-0 items-center gap-1">
+            {k > 0 && <span className="stroke-thin text-sm font-bold text-white/80">→</span>}
+            <ChainWord
+              word={c.word}
+              mine={c.mine}
+              latest={k === match.chain.length - 1}
+              fresh={c.mine && freshWords.includes(c.word)}
+            />
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Top of the screen during a duel: opponent | timer + what's happening | you, and
+ * the chain of words under it. The sides match where each player sits on screen
+ * (seat 0 is on the right of the duel camera).
  */
 function DuelBar({ match, now }) {
   const selfId = useGame((s) => s.selfId)
@@ -193,19 +254,15 @@ function DuelBar({ match, now }) {
   const them = useGame((s) => (match.opponent ? s.players[match.opponent] : null))
   const self = { name: profile?.name || 'You', title: profile?.equippedTitle }
 
+  const playing = match.phase === 'playing'
   const left = secondsLeft(match.endsAt, now)
   let status
   if (match.phase === 'countdown') status = 'GET READY'
-  else if (match.phase === 'hiding') status = match.hidden ? 'WAITING…' : 'HIDE YOUR SLAPS'
   else if (match.myTurn) status = 'YOUR TURN'
-  else if (match.pending) status = 'NOM NOM…'
+  else if (match.pending) status = 'HAHA! 🤣'
   else status = 'THEIR TURN'
 
-  // Whose go it is, on the cards themselves: glowing with a TURN tab, or faded.
-  const eating = match.phase === 'eating'
-  const myGo = eating && (match.myTurn || (match.pending && !match.theirTurn))
-  const theirGo = eating && match.theirTurn
-  const turnOf = (mine) => (!eating ? null : (mine ? myGo : theirGo) ? 'active' : 'idle')
+  const turnOf = (mine) => (!playing || match.pending ? null : (mine ? match.myTurn : match.theirTurn) ? 'active' : 'idle')
 
   const myCard = (
     <DuelistCard
@@ -229,259 +286,294 @@ function DuelBar({ match, now }) {
     />
   )
   return (
-    <div className="hud-top pointer-events-none absolute left-1/2 z-40 flex w-[min(94vw,36rem)] -translate-x-1/2 items-start gap-2">
-      {match.seat === 0 ? theirCard : myCard}
-      <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
-        <div
-          className={`btn-3d flex size-12 items-center justify-center text-xl font-bold text-white ${
-            left <= 5 && match.phase !== 'countdown' ? 'bg-[#e53935]' : 'bg-[#2d6b78]'
-          }`}
-        >
-          <span className="stroke-thin">{match.phase === 'countdown' ? 'VS' : left}</span>
+    <div className="hud-top pointer-events-none absolute left-1/2 z-40 flex w-[min(94vw,38rem)] -translate-x-1/2 flex-col items-center gap-1.5">
+      <div className="flex w-full items-start gap-2">
+        {match.seat === 0 ? theirCard : myCard}
+        <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
+          <div
+            className={`btn-3d flex size-12 items-center justify-center text-xl font-bold text-white ${
+              left <= 3 && playing && !match.pending ? 'bg-[#e53935]' : 'bg-[#2d6b78]'
+            }`}
+          >
+            <span className="stroke-thin">{match.phase === 'countdown' ? 'VS' : match.pending ? '🤣' : left}</span>
+          </div>
+          <span
+            className={`stroke-thin whitespace-nowrap rounded-md px-1.5 text-[0.7rem] font-bold text-white ${
+              match.myTurn ? 'bg-[#22c55e]' : 'bg-black/45'
+            }`}
+          >
+            {status}
+          </span>
+          {match.practice && (
+            <span className="stroke-thin whitespace-nowrap rounded-md bg-[#8a5cff] px-1.5 text-[0.6rem] font-bold text-white">
+              🤖 PRACTICE
+            </span>
+          )}
         </div>
-        <span
-          className={`stroke-thin whitespace-nowrap rounded-md px-1.5 text-[0.7rem] font-bold text-white ${
-            match.myTurn || (match.phase === 'hiding' && !match.hidden) ? 'bg-[#22c55e]' : 'bg-black/45'
-          }`}
-        >
-          {status}
-        </span>
+        {match.seat === 0 ? myCard : theirCard}
       </div>
-      {match.seat === 0 ? myCard : theirCard}
+      {playing && <ChainStrip match={match} />}
     </div>
   )
 }
 
-/**
- * One chip square of a pad. `state` is the plate character ('0' uneaten, '1' eaten,
- * '2' slap found, '3' golden eaten); `slap` shows a hidden slap (yours, or all of
- * theirs once the duel is over).
- */
-function ChipCell({ state, slap, tappable, onTap, picked }) {
-  let face
-  if (state === '0') {
-    face = (
-      <span className={`chip-face ${tappable ? 'chip-bob' : ''} relative flex size-[82%] items-center justify-center`}>
-        {(slap || picked) && <span className="text-[1.3rem] leading-none drop-shadow">🖐️</span>}
-      </span>
-    )
-  } else if (state === '2') {
-    face = <span className="flex size-[82%] items-center justify-center rounded-full bg-[#e8343c] text-[1.4rem]">🖐️</span>
-  } else if (state === '3') {
-    face = <span className="text-[1.4rem] leading-none">✨</span>
-  } else {
-    face = <span className="text-sm font-bold text-black/30">· ·</span>
-  }
+/** The letter the word must start with, as a big game tile. */
+function LetterTile({ letter, size = 'size-14 text-[2.4rem]' }) {
   return (
-    <button
-      type="button"
-      disabled={!tappable}
-      onClick={onTap}
-      className={`chip-cell press flex items-center justify-center rounded-xl border-[3px] ${
-        picked ? 'border-[#ffe23d] bg-[#ff6b6b]' : 'border-black/50 bg-[#fff3dc]'
-      } ${tappable ? 'cursor-pointer hover:brightness-110' : 'cursor-default'}`}
-    >
-      {face}
-    </button>
-  )
-}
-
-/** A plate as a 3 x 3 pad, laid out the way the duel camera sees it on the table. */
-function ChipPad({ match, plate, interactive }) {
-  const draft = useGame((s) => s.draft)
-  const mine = plate === match.seat
-  const chips = mine ? match.myPlate : match.theirPlate
-  const slaps = mine ? match.mySlaps : match.theirSlaps
-  const hiding = mine && match.phase === 'hiding' && !match.hidden
-  return (
-    <div className="grid grid-cols-3 gap-1.5">
-      {CELL_LIST.map((c) => {
-        const tappable = interactive && Boolean(chipAction(match.table, plate, c))
-        return (
-          <ChipCell
-            key={c}
-            state={chips[c] || '0'}
-            slap={!hiding && slaps.includes(c)}
-            picked={hiding && draft.includes(c)}
-            tappable={tappable}
-            onTap={() => tapChip(match.table, plate, c)}
-          />
-        )
-      })}
-    </div>
-  )
-}
-
-function PadTimer({ match, now }) {
-  const left = secondsLeft(match.endsAt, now)
-  return (
-    <span
-      className={`btn-3d flex size-9 shrink-0 items-center justify-center text-base font-bold text-white ${
-        left <= 5 ? 'bg-[#e53935]' : 'bg-[#2d6b78]'
-      }`}
-    >
-      <span className="stroke-thin">{left}</span>
+    <span className={`letter-tile flex shrink-0 items-center justify-center rounded-xl font-bold text-[#1d2433] ${size}`}>
+      {(letter || '?').toUpperCase()}
     </span>
   )
 }
 
-/** Hiding: pick DATA.chips.slaps chips on your own plate, then lock them in. */
-function HidePanel({ match, now }) {
-  const picked = useGame((s) => s.draft.length)
-  const ready = picked === CHIPS.slaps
+/** How much of the turn is left, as a bar that goes from green to red. */
+function TimerBar({ match, now }) {
+  const total = match.turnMs || 1
+  const frac = Math.max(0, Math.min(1, (match.endsAt - now) / total))
+  const color = frac > 0.5 ? '#5dff7a' : frac > 0.25 ? '#ffcf4a' : '#ff4a4a'
   return (
-    <div className="chip-pad-pos ui-panel pop-in pointer-events-auto absolute z-30 flex w-max flex-col items-center gap-2 p-2.5">
-      <div className="flex w-full items-center justify-between gap-2">
-        <div className="flex flex-col">
-          <span className="stroke-text text-lg font-bold leading-tight text-white">Hide your slaps 🤫</span>
-          <span className="text-xs font-bold text-white/75">
-            Tap {CHIPS.slaps} of your chips · {picked}/{CHIPS.slaps}
-          </span>
-        </div>
-        <PadTimer match={match} now={now} />
-      </div>
-      <ChipPad match={match} plate={match.seat} interactive />
-      <div className="flex w-full gap-2">
-        <button
-          type="button"
-          onClick={randomDraft}
-          className="btn-3d press flex-1 bg-gradient-to-b from-[#c49bff] to-[#7b4dff] px-2 py-1.5 text-sm font-bold text-white"
-        >
-          <span className="stroke-thin">🎲 Random</span>
-        </button>
-        <button
-          type="button"
-          disabled={!ready}
-          onClick={lockInSlaps}
-          className="btn-3d press flex-1 bg-gradient-to-b from-[#5dff5d] to-[#22c522] px-2 py-1.5 text-sm font-bold text-white disabled:opacity-50"
-        >
-          <span className="stroke-thin">LOCK IN ✅</span>
-        </button>
-      </div>
-    </div>
-  )
-}
-
-/** Your turn: pick a chip from their plate. */
-function EatPanel({ match, now }) {
-  return (
-    <div className="chip-pad-pos ui-panel my-turn-glow pop-in pointer-events-auto absolute z-30 flex w-max flex-col items-center gap-2 p-2.5">
-      <div className="flex w-full items-center justify-between gap-2">
-        <div className="flex flex-col">
-          <span className="stroke-text text-xl font-bold leading-tight text-[#7dff7a]">YOUR TURN! 😋</span>
-          <span className="text-xs font-bold text-white/80">Pick a chip from their plate</span>
-        </div>
-        <PadTimer match={match} now={now} />
-      </div>
-      <ChipPad match={match} plate={1 - match.seat} interactive />
-    </div>
-  )
-}
-
-/** Their turn: your own plate, read-only, so you can watch them close in on your slaps. */
-function WatchPanel({ match, name }) {
-  return (
-    <div className="chip-pad-pos ui-panel pointer-events-none absolute z-30 flex w-max scale-90 flex-col items-center gap-1.5 p-2 opacity-90">
-      <span className="stroke-thin text-sm font-bold text-[#ffcf4a]">⏳ {name} is picking…</span>
-      <span className="text-xs font-bold text-white/75">Your plate</span>
-      <ChipPad match={match} plate={match.seat} interactive={false} />
+    <div className="h-2.5 w-full overflow-hidden rounded-full border-2 border-black/60 bg-black/40">
+      <div className="timer-fill h-full rounded-full" style={{ width: `${frac * 100}%`, background: color }} />
     </div>
   )
 }
 
 /**
- * Whose turn it is, big and in the middle (in the reveal card's spot under the VS
- * bar, which only takes it while a bite is being revealed): a glowing green "YOUR
- * TURN" or a calm "⏳ Name's turn".
+ * Your turn: type a word starting with the letter and send it. The server checks
+ * it (letters only, 3+ letters, the right first letter, not used yet, in the
+ * dictionary) and says why if not; nothing is decided here. Keystrokes are only
+ * tidied (letters, lowercase) so the box shows what will be sent.
  */
-function TurnPill({ mine, name }) {
+function WordPanel({ match, now }) {
+  const error = useGame((s) => s.wordError)
+  const hint = useGame((s) => s.hint)
+  const lucky = useGame((s) => s.profile?.lucky)
+  const [text, setText] = useState(match.letter)
+  const typing = useRef({ at: 0, timer: 0, sent: -1 })
+
+  // The opponent sees how many letters you've typed (never the letters).
+  const relayTyping = (n) => {
+    const r = typing.current
+    clearTimeout(r.timer)
+    const wait = Math.max(0, TYPING_EVERY_MS - (Date.now() - r.at))
+    r.timer = setTimeout(() => {
+      if (n === r.sent) return
+      r.sent = n
+      r.at = Date.now()
+      send({ t: 'typing', n })
+    }, wait)
+  }
+
+  useEffect(() => {
+    relayTyping(match.letter.length)
+    const r = typing.current
+    return () => clearTimeout(r.timer)
+    // Once per turn: the panel is mounted fresh for each of your turns.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const onChange = (e) => {
+    const next = e.target.value.toLowerCase().replace(/[^a-z]/g, '').slice(0, MAX_WORD)
+    setText(next)
+    if (useGame.getState().wordError) useGame.setState({ wordError: null })
+    relayTyping(next.length)
+  }
+
+  const submit = (e) => {
+    e.preventDefault()
+    if (!text) return
+    sfx.click()
+    send({ t: 'word', text })
+  }
+
+  const applyHint = () => {
+    sfx.click()
+    setText(hint.word)
+    relayTyping(hint.word.length)
+  }
+
   return (
-    <div className="reveal-pos pointer-events-none absolute left-1/2 z-40 -translate-x-1/2">
-      {mine ? (
-        <div className="turn-pill-mine btn-3d flex items-center gap-2 bg-gradient-to-b from-[#5dff7a] to-[#18b84a] px-4 py-1.5">
-          <span className="text-2xl leading-none">👉</span>
-          <span className="stroke-text whitespace-nowrap text-[1.6rem] font-bold leading-none text-white">YOUR TURN</span>
-          <span className="stroke-thin hidden whitespace-nowrap text-sm font-bold text-white/95 sm:inline">· pick a chip!</span>
-        </div>
-      ) : (
-        <div className="ui-panel flex items-center gap-2 px-4 py-1.5">
-          <span className="text-xl leading-none">⏳</span>
-          <span className="stroke-thin max-w-[60vw] truncate whitespace-nowrap text-lg font-bold text-white">
-            {name}’s turn
+    <form
+      onSubmit={submit}
+      className="word-panel-pos ui-panel my-turn-glow pop-in pointer-events-auto absolute z-30 flex w-[min(94vw,27rem)] flex-col gap-2 p-2.5"
+    >
+      <div className="flex items-center gap-2.5">
+        <LetterTile letter={match.letter} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="stroke-text text-xl font-bold leading-tight text-[#7dff7a]">YOUR TURN! ✍️</span>
+          <span className="text-xs font-bold leading-snug text-white/80">
+            A word starting with <span className="text-[#ffe23d]">{match.letter.toUpperCase()}</span> · {W.minLength}+
+            letters · no repeats
           </span>
-          <span className="whitespace-nowrap text-xs font-bold text-white/70">· wait…</span>
         </div>
+        <span className="stroke-text shrink-0 text-2xl font-bold text-white">{secondsLeft(match.endsAt, now)}</span>
+      </div>
+      <TimerBar match={match} now={now} />
+      <div className="flex gap-2">
+        {/* Remounted (re-focused, shaking) on each refusal; the word stays to be fixed. */}
+        <input
+          key={error?.at ?? 0}
+          value={text}
+          onChange={onChange}
+          autoFocus
+          aria-label={`A word starting with ${match.letter.toUpperCase()}`}
+          aria-invalid={Boolean(error)}
+          aria-describedby="word-error"
+          placeholder={`${match.letter.toUpperCase()}…`}
+          maxLength={MAX_WORD}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          enterKeyHint="send"
+          className={`word-input min-w-0 flex-1 select-text rounded-xl border-[3px] bg-white px-3 py-2 text-2xl font-bold uppercase tracking-wider text-[#1d2433] outline-none placeholder:text-black/25 ${
+            error ? 'shake border-[#ff4a4a]' : 'border-black/60 focus:border-[#2a6bff]'
+          }`}
+        />
+        <button
+          type="submit"
+          disabled={!text}
+          className="btn-3d press shrink-0 bg-gradient-to-b from-[#5dff5d] to-[#22c522] px-4 text-lg font-bold text-white disabled:opacity-50"
+        >
+          <span className="stroke-thin">SEND ⏎</span>
+        </button>
+      </div>
+      <div id="word-error" role="alert" className="min-h-[1.25rem] text-center text-sm font-bold leading-tight">
+        {error && <span className="stroke-thin text-[#ff8a8a]">❌ {error.reason}</span>}
+      </div>
+      <Perks match={match} lucky={lucky} hint={hint} onUseHint={applyHint} />
+    </form>
+  )
+}
+
+/**
+ * Under the word box: today's lucky letter, your pet's hint button (or its hint,
+ * tap to use), shields left and extra seconds.
+ */
+function Perks({ match, lucky, hint, onUseHint }) {
+  const chip = 'stroke-thin whitespace-nowrap rounded-lg border-2 border-black/50 px-1.5 py-0.5 text-xs font-bold text-white'
+  return (
+    <div className="-mt-1 flex flex-wrap items-center justify-center gap-1.5">
+      {lucky && (
+        <span className={`${chip} bg-[#c58a00]`} title="End a word with today's lucky letter for bonus cash">
+          ⭐ End with {lucky.toUpperCase()} = +${DATA.lucky.cash}
+        </span>
       )}
+      {hint ? (
+        <button type="button" onClick={onUseHint} className={`btn-3d press ${chip} bg-gradient-to-b from-[#fff15c] to-[#ffb800]`}>
+          💡 Try {hint.word.toUpperCase()}
+        </button>
+      ) : (
+        match.hintsLeft > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              sfx.click()
+              send({ t: 'hint' })
+            }}
+            className={`btn-3d press ${chip} bg-gradient-to-b from-[#c49bff] to-[#7b4dff]`}
+          >
+            💡 Pet hint ({match.hintsLeft})
+          </button>
+        )
+      )}
+      {match.shieldsLeft > 0 && <span className={`${chip} bg-[#2d6b78]`}>🛡️ {match.shieldsLeft}</span>}
+      {match.extraSec > 0 && <span className={`${chip} bg-[#2d6b78]`}>🐾 +{match.extraSec}s</span>}
     </div>
   )
 }
 
-/** "YOUR TURN!" slammed across the middle of the screen as your turn begins. */
-function TurnSplash() {
+/** Their turn: their letter, the clock, and dots for each letter they've typed. */
+function WatchPanel({ match, name, now }) {
+  const typed = useGame((s) => s.oppTyping)
+  const n = typed && now - typed.at < 4000 ? typed.n : 0
+  return (
+    <div className="word-panel-pos ui-panel pointer-events-none absolute z-30 flex w-[min(90vw,22rem)] flex-col gap-1.5 p-2 opacity-95">
+      <div className="flex items-center gap-2">
+        <LetterTile letter={match.letter} size="size-10 text-[1.7rem]" />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="stroke-thin truncate text-sm font-bold text-[#ffcf4a]">⏳ {name} is thinking…</span>
+          <span className="flex h-4 items-center gap-1" aria-label={`${n} letters typed`}>
+            {n > 0 ? (
+              Array.from({ length: Math.min(n, 16) }, (_, k) => <span key={k} className="typing-dot" />)
+            ) : (
+              <span className="text-xs font-bold text-white/60">get your next word ready!</span>
+            )}
+          </span>
+        </div>
+        <span className="stroke-text shrink-0 text-xl font-bold text-white">{secondsLeft(match.endsAt, now)}</span>
+      </div>
+      <TimerBar match={match} now={now} />
+    </div>
+  )
+}
+
+/** "YOUR TURN!" slammed across the middle of the screen as a chain starts. */
+function TurnSplash({ letter }) {
   return (
     <div className="pointer-events-none absolute left-1/2 top-[40%] z-[44] -translate-x-1/2 -translate-y-1/2 text-center">
       <div className="turn-splash flex flex-col items-center">
         <span className="stroke-text whitespace-nowrap text-[4.2rem] font-bold leading-none text-[#7dff7a]">YOUR TURN!</span>
-        <span className="stroke-text mt-1 whitespace-nowrap text-2xl font-bold text-white">Pick a chip 😋</span>
+        <span className="stroke-text mt-1 whitespace-nowrap text-2xl font-bold text-white">
+          Start with <span className="text-[#ffe23d]">{letter.toUpperCase()}</span> ✍️
+        </span>
       </div>
     </div>
   )
 }
 
-const OUTCOME = {
-  safe: { label: 'CRUNCH!', icon: '😋', bg: 'from-[#5dff7a] to-[#18b84a]' },
-  slap: { label: 'SLAP!', icon: '🖐️', bg: 'from-[#ff6b6b] to-[#d4182c]' },
-  golden: { label: 'GOLDEN!', icon: '✨', bg: 'from-[#fff15c] to-[#ffb800]' },
-}
-
-/** "2 slaps left" etc.: how many more slaps knock this player out. */
-const slapsLeft = (hearts) => (hearts === 1 ? 'one more slap and you’re OUT!' : `${hearts} slaps left`)
-
-function outcomeDetail(reveal) {
-  const { mine, kind, hearts } = reveal
-  if (!kind) return mine ? 'Crunch… or SLAP?' : 'They’re taking a bite…'
-  if (kind === 'safe') return mine ? 'A safe chip. Phew!' : 'They found a safe chip'
-  if (kind === 'slap') {
-    if (hearts <= 0) return mine ? 'That was your last heart!' : 'That was their last heart!'
-    return mine ? `You got slapped! −1 ❤️ · ${slapsLeft(hearts)}` : `You slapped them! 😈 · ${hearts} ❤️ left`
-  }
-  return mine ? `A golden chip! +$${CHIPS.goldenCash}` : 'They found a golden chip'
-}
-
 /**
- * The bite being decided, in the sky under the VS bar: a pulsing chip with a
- * drumroll, then the outcome slamming in. Both players see it, each from their side.
+ * The moment's big news in the middle of the screen: someone ran out of time (and
+ * got laughed at), or a long word earned its bonus. Ordinary words just pop into the chain.
  */
-function RevealCard({ reveal }) {
-  const style = reveal.kind ? OUTCOME[reveal.kind] : null
+function Callout({ callout }) {
+  let icon
+  let label
+  let detail
+  let bg
+  if (callout.kind === 'timeout') {
+    icon = '⏰'
+    label = 'TOO SLOW!'
+    bg = 'from-[#ff6b6b] to-[#d4182c]'
+    if (callout.hearts <= 0) detail = callout.mine ? 'That was your last heart!' : 'That was their last heart!'
+    else if (callout.mine) detail = `They're laughing at you! 😳 −1 ❤️ · ${callout.hearts} left`
+    else detail = `HAHA, too slow! 🤣 · ${callout.hearts} ❤️ left · new letter for you`
+  } else if (callout.kind === 'shield') {
+    icon = '🛡️'
+    label = 'SAVED!'
+    bg = 'from-[#5ad8ff] to-[#2a6bff]'
+    detail = callout.mine ? 'Too slow, but your pet saved your heart!' : 'Their pet saved their heart · new letter for you'
+  } else if (callout.bonus) {
+    icon = '✨'
+    label = 'BIG WORD!'
+    bg = 'from-[#fff15c] to-[#ffb800]'
+    detail = callout.mine
+      ? `${callout.word.toUpperCase()} · +$${W.bonusCash}${callout.lucky ? ` · ⭐ +$${DATA.lucky.cash}` : ''}`
+      : `They played ${callout.word.toUpperCase()}`
+  } else if (callout.lucky) {
+    icon = '⭐'
+    label = 'LUCKY!'
+    bg = 'from-[#fff15c] to-[#ffb800]'
+    detail = `${callout.word.toUpperCase()} ends with the lucky letter · +$${DATA.lucky.cash}`
+  } else {
+    return null
+  }
   return (
-    <div className="reveal-pos pointer-events-none absolute left-1/2 z-40 -translate-x-1/2">
-      <div className="ui-panel pop-in flex items-center gap-3 px-3 py-2">
-        <div className="flex flex-col items-center gap-1">
-          <div className="stroke-thin whitespace-nowrap text-xs font-bold text-white/90">
-            {reveal.mine ? 'You bite' : 'They bite'}
-          </div>
-          <div className={`chip-face size-14 ${reveal.kind ? '' : 'reveal-pulse'}`} />
+    <div className="callout-pos pointer-events-none absolute left-1/2 z-40 -translate-x-1/2">
+      <div className="flex flex-col items-center gap-1">
+        <div key={callout.until} className={`slam btn-3d flex items-center gap-2 bg-gradient-to-b px-4 py-1 ${bg}`}>
+          <span className="text-[1.8rem] leading-none">{icon}</span>
+          <span className="stroke-text text-[1.9rem] font-bold leading-none text-white">{label}</span>
         </div>
-        <div className="flex min-w-[11rem] flex-col items-center gap-1.5">
-          {style ? (
-            <div key={reveal.kind} className={`slam btn-3d flex items-center gap-2 bg-gradient-to-b px-4 py-1 ${style.bg}`}>
-              <span className="text-[1.8rem] leading-none">{style.icon}</span>
-              <span className="stroke-text text-[1.9rem] font-bold leading-none text-white">{style.label}</span>
-            </div>
-          ) : (
-            <div className="stroke-text text-[1.9rem] font-bold leading-none text-white">🥁 …</div>
-          )}
-          <div className="stroke-thin text-center text-sm font-bold text-white">{outcomeDetail(reveal)}</div>
-        </div>
+        <div className="stroke-thin text-center text-sm font-bold text-white">{detail}</div>
       </div>
     </div>
   )
 }
 
 /**
- * A soft glow around the screen's edges when you get slapped (red) or find the
- * golden chip (gold): a fade in and out, never a hard full-screen flash.
+ * A soft glow around the screen's edges when you're too slow (red) or play a long
+ * word (gold): a fade in and out, never a hard full-screen flash.
  */
 function ScreenFlash() {
   const flash = useGame((s) => s.flash)
@@ -494,7 +586,7 @@ function ScreenFlash() {
   return (
     <div
       key={flash.at}
-      className={`pointer-events-none absolute inset-0 z-[45] ${flash.kind === 'slap' ? 'flash-slap' : 'flash-golden'}`}
+      className={`pointer-events-none absolute inset-0 z-[45] ${flash.kind === 'fail' ? 'flash-fail' : 'flash-golden'}`}
       style={{ animationDelay: `${flash.delay || 0}ms` }}
     />
   )
@@ -549,16 +641,47 @@ function EmotePanel({ hiddenInPortrait }) {
   )
 }
 
+/**
+ * Alone at a table: waiting for a real player (anyone else waiting alone is
+ * brought over by the server). WordBot only comes if the player taps for it, and
+ * the button is gone while the tables are short (real players need the seats).
+ */
+function WaitingPanel({ match }) {
+  return (
+    <div className="pointer-events-none absolute bottom-[14%] left-1/2 z-30 flex w-[min(92vw,26rem)] -translate-x-1/2 flex-col items-center gap-2">
+      <span className="stroke-text whitespace-nowrap text-2xl font-bold text-white">Waiting for an opponent… (1/2)</span>
+      <span className="stroke-thin text-center text-base font-bold text-white/90">
+        {match.botAllowed ? `👀 Looking for a player · or practise with ${DATA.bot.name}` : '👀 Looking for a real player…'}
+      </span>
+      <div className="flex gap-2">
+        {match.botAllowed && (
+          <button
+            type="button"
+            onClick={() => {
+              sfx.click()
+              send({ t: 'bot' })
+            }}
+            className="btn-3d press pointer-events-auto bg-gradient-to-b from-[#c49bff] to-[#7b4dff] px-4 py-1.5 text-base font-bold text-white"
+          >
+            <span className="stroke-thin">🤖 Play {DATA.bot.name}</span>
+          </button>
+        )}
+        <LeaveButton />
+      </div>
+    </div>
+  )
+}
+
 const RESULT_TEXT = {
   win: {
-    slapped: `They bit all ${CHIPS.slaps} of your slaps!`,
+    knockout: 'They ran out of hearts!',
     forfeit: 'They quit the duel!',
     afk: 'They fell asleep 😴',
   },
   lose: {
-    slapped: `You bit all ${CHIPS.slaps} of their slaps!`,
+    knockout: 'Out of hearts. Think faster next time!',
     forfeit: 'You quit the duel',
-    afk: 'Too slow — you were out of time',
+    afk: 'Too slow, you were out of time',
   },
 }
 
@@ -574,15 +697,14 @@ function ResultBanner() {
 
   if (!result || result.until < now) return null
   const reason = RESULT_TEXT[result.win ? 'win' : 'lose'][result.reason] || ''
-  const played = result.reason === 'slapped'
   let reward = result.reward ? `+${money(result.reward)} ${result.win ? '💵' : 'for playing'}` : ''
   // A quitter's money changes hands: it is already in the winner's reward.
   if (result.penalty && result.win) reward = `+${money(result.reward)} 💵 (incl. their ${money(result.penalty)})`
   const lost = result.penalty && !result.win ? `−${money(result.penalty)}` : ''
-  const title = result.win ? 'YOU WIN! 🏆' : result.reason === 'slapped' ? 'KNOCKED OUT! 💀' : 'YOU LOSE 😭'
+  const title = result.win ? 'YOU WIN! 🏆' : result.reason === 'knockout' ? 'KNOCKED OUT! 💀' : 'YOU LOSE 😭'
 
   return (
-    // While a quitter is being slapped, the banner keeps clear of the players' heads.
+    // While a quitter is being laughed at, the banner keeps clear of the players' heads.
     <Banner top={result.punished ? 'top-[7%]' : 'top-[26%]'}>
       <div className="pop-in flex flex-col items-center">
         <div
@@ -595,21 +717,19 @@ function ResultBanner() {
           {reward && <span className="text-[#5cff5c]">{`  ·  ${reward}`}</span>}
           {lost && <span className="text-[#ff6b6b]">{`  ·  ${lost}`}</span>}
         </div>
-        {played && result.theirSlaps.length > 0 && (
-          <div className="ui-panel mt-3 flex items-center gap-3 px-3 py-2">
-            <span className="stroke-thin text-sm font-bold text-white">Their slaps were here:</span>
-            <div className="grid grid-cols-3 gap-1">
-              {CELL_LIST.map((c) => (
-                <span
-                  key={c}
-                  className={`flex size-6 items-center justify-center rounded-md text-sm ${
-                    result.theirSlaps.includes(c) ? 'bg-[#e8343c]' : 'bg-[#fff3dc]'
-                  }`}
-                >
-                  {result.theirSlaps.includes(c) ? '🖐️' : ''}
-                </span>
-              ))}
-            </div>
+        {result.practice && (
+          <div className="stroke-thin mt-2 text-base font-bold text-[#d9c2ff]">
+            🤖 Practice duel: half cash, no 🏆 win. Beat real players for wins!
+          </div>
+        )}
+        {result.words > 0 && (
+          <div className="ui-panel mt-3 flex items-center gap-3 px-3 py-1.5">
+            <span className="stroke-thin text-sm font-bold text-white">🔗 {result.words} words</span>
+            {result.longest && (
+              <span className="stroke-thin text-sm font-bold text-white">
+                📏 Longest: <span className="text-[#ffe23d]">{result.longest.toUpperCase()}</span>
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -620,7 +740,7 @@ function ResultBanner() {
 /** Everything on screen while seated at a table: waiting, countdown, the duel. */
 export function MatchUI() {
   const match = useGame((s) => s.match)
-  const reveal = useGame((s) => s.reveal)
+  const callout = useGame((s) => s.callout)
   const quitAsk = useGame((s) => s.quitAsk)
   const now = useNow(150)
 
@@ -630,29 +750,20 @@ export function MatchUI() {
     if (countdown) sfx.tick()
   }, [countdown])
 
-  // The result banner takes over from the last bite's card (never both at once).
+  const playing = match?.phase === 'playing'
   const showingResult = useGame((s) => Boolean(s.result))
-  const revealing = Boolean(match && reveal && reveal.until > now && !showingResult)
-  const hiding = match?.phase === 'hiding' && !match.hidden
-  const biting = match?.phase === 'eating' && match.myTurn && !revealing
-  const watching = match?.phase === 'eating' && !match.myTurn && !revealing
-  const padOpen = hiding || biting
+  const calling = Boolean(match && callout && callout.until > now && !showingResult)
   const theirName = useGame((s) => (match?.opponent && s.players[match.opponent]?.name) || 'Opponent')
   const splash = useGame((s) => s.turnSplash)
-  const splashing = biting && splash && now >= splash.at && now < splash.until
+  const splashing = playing && match.myTurn && splash && now >= splash.at && now < splash.until
 
   return (
     <>
       <ScreenFlash />
-      {match && <EmotePanel hiddenInPortrait={padOpen || watching} />}
-      {match && ['countdown', 'hiding', 'eating'].includes(match.phase) && <DuelBar match={match} now={now} />}
+      {match && <EmotePanel hiddenInPortrait={playing} />}
+      {match && (match.phase === 'countdown' || playing) && <DuelBar match={match} now={now} />}
 
-      {match?.phase === 'waiting' && (
-        <div className="pointer-events-none absolute bottom-[16%] left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2">
-          <span className="stroke-text whitespace-nowrap text-2xl font-bold text-white">Waiting for an opponent… (1/2)</span>
-          <LeaveButton />
-        </div>
-      )}
+      {match?.phase === 'waiting' && <WaitingPanel match={match} />}
 
       {match?.phase === 'countdown' && (
         <>
@@ -667,31 +778,22 @@ export function MatchUI() {
         </>
       )}
 
-      {hiding && <HidePanel match={match} now={now} />}
-      {match?.phase === 'hiding' && match.hidden && (
-        <Banner top="top-[62%]">
-          <span className="stroke-text text-2xl font-bold text-white">
-            Slaps hidden! ✅ {match.opponentReady ? '' : 'Waiting for your opponent…'}
-          </span>
-        </Banner>
-      )}
-
-      {/* The duel's last bite stays on screen into the result. */}
-      {revealing && (match.phase === 'eating' || match.phase === 'ended') && <RevealCard reveal={reveal} />}
-      {match?.phase === 'eating' && (
+      {/* The duel's last callout (the knockout's "TOO SLOW!") stays on screen into the result. */}
+      {calling && (playing || match.phase === 'ended') && <Callout callout={callout} />}
+      {playing && (
         <>
-          {(biting || (watching && match.theirTurn)) && <TurnPill mine={biting} name={theirName} />}
-          {splashing && <TurnSplash key={splash.at} />}
-          {biting && <EatPanel match={match} now={now} />}
-          {watching && <WatchPanel match={match} name={theirName} />}
-          <div className="pointer-events-none absolute bottom-3 right-3 z-40 portrait:bottom-auto portrait:top-[7.5rem]">
+          {splashing && !calling && <TurnSplash key={splash.at} letter={match.letter} />}
+          {match.myTurn && <WordPanel match={match} now={now} />}
+          {match.theirTurn && <WatchPanel match={match} name={theirName} now={now} />}
+          {/* Portrait: halfway down the right edge, clear of the chain and the word box. */}
+          <div className="pointer-events-none absolute bottom-3 right-3 z-40 portrait:bottom-auto portrait:top-[42%]">
             <LeaveButton label="Quit duel" forfeit />
           </div>
         </>
       )}
 
       <ResultBanner />
-      {quitAsk && match?.phase === 'eating' && <QuitDialog />}
+      {quitAsk && playing && <QuitDialog />}
     </>
   )
 }

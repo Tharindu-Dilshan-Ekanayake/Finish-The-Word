@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { BoxGeometry, MeshBasicMaterial, MeshLambertMaterial } from 'three'
 
 import { useGame } from '../net/gameStore'
-import Chips from './Chips'
 import TurnArrow from './TurnArrow'
 import { useCulled } from './culling'
 import { Label } from './labels'
@@ -53,9 +52,8 @@ const thronePlacement = SEATS.map((s) => ({ p: [s.x, 0, s.z], ry: s.table.ry, s:
 const gemPlacement = SEATS.map((s) => ({ p: [s.x, 0, s.z], ry: s.table.ry, s: ZERO, c: '#ffffff' }))
 
 /**
- * All ten tables: tops, legs and both chairs each, as a handful of instanced meshes,
- * plus the chips on them (see Chips). Each seat's chair takes the colour of the
- * chair its occupant has equipped.
+ * All ten tables: tops, legs and both chairs each, as a handful of instanced meshes.
+ * Each seat's chair takes the colour of the chair its occupant has equipped.
  */
 export function Tables() {
   const { shadows, particles } = useSettings()
@@ -131,7 +129,6 @@ export function Tables() {
       <instancedMesh ref={cushionsRef} args={[res.cushion, res.tinted, chairs.length]} receiveShadow />
       <instancedMesh ref={thronesRef} args={[res.throne, res.tinted, chairs.length]} castShadow={shadows} />
       <instancedMesh ref={gemsRef} args={[res.gems, res.gemMaterial, chairs.length]} />
-      <Chips />
       <TurnArrow />
       {DATA.tables.map((t) => (
         <TableLabel key={t.id} table={t} />
@@ -179,29 +176,33 @@ function SeatAuras() {
 
 const heartsText = (n) => '❤️'.repeat(Math.max(0, n)) || '💔'
 
-function tableLines(table, weekend, now) {
+function tableLines(table, weekend, now, stage = false) {
   const reward = DATA.winReward * (weekend ? 2 : 1)
   const prize = weekend
     ? { text: `Win $${reward} (x2)`, size: 34, rainbow: true }
     : { text: `Win $${reward}`, size: 34, color: '#5cff5c' }
   if (!table || table.phase === 'waiting') {
     const n = table ? table.seats.filter(Boolean).length : 0
-    return [{ text: `${n}/2 Players`, size: 40 }, prize]
+    const lines = [{ text: `${n}/2 Players`, size: 40 }, prize]
+    if (stage) lines.unshift({ text: '⭐ CENTER STAGE ⭐', size: 30, color: '#ffd23d' })
+    return lines
   }
   if (table.phase === 'countdown') {
     return [{ text: `Starting in ${Math.max(1, Math.ceil((table.endsAt - now) / 1000))}`, size: 40 }]
   }
-  if (table.phase === 'hiding') return [{ text: 'Hiding slaps… 🤫', size: 34 }]
-  if (table.phase === 'eating') {
+  if (table.phase === 'playing') {
     // Spectators get the score: each side's hearts, left to right as seen from the
-    // plaza (behind the players, where seat 0 is on the left).
-    return [{ text: `${heartsText(table.hearts[0])}  vs  ${heartsText(table.hearts[1])}`, size: 34 }]
+    // plaza (behind the players, where seat 0 is on the left), and the chain so far.
+    const lines = [{ text: `${heartsText(table.hearts[0])}  vs  ${heartsText(table.hearts[1])}`, size: 34 }]
+    if (table.last) lines.push({ text: `${table.last.toUpperCase()} → ${table.letter.toUpperCase()}…`, size: 30, color: '#ffe23d' })
+    else if (table.letter) lines.push({ text: `Start with ${table.letter.toUpperCase()}`, size: 30, color: '#ffe23d' })
+    return lines
   }
   return []
 }
 
 /**
- * "0/2 Players / Win $200" above a table, or the duel's hearts while it plays.
+ * "0/2 Players / Win $200" above a table, or the duel's hearts and chain while it plays.
  * Polled, since the countdown ticks. Hidden at the player's own table, where the
  * HUD shows the same thing.
  */
@@ -212,13 +213,15 @@ function TableLabel({ table }) {
     const update = () => {
       const s = useGame.getState()
       label.set(
-        s.match?.table === table.id ? [] : tableLines(s.tables[table.id], s.profile?.weekend, Date.now()),
+        s.match?.table === table.id
+          ? []
+          : tableLines(s.tables[table.id], s.profile?.weekend, Date.now(), Boolean(table.stage)),
       )
     }
     update()
     const id = setInterval(update, 250)
     return () => clearInterval(id)
-  }, [label, table.id])
+  }, [label, table.id, table.stage])
 
   useCulled(label.sprite, table.x, table.z, { label, group: 'tables' })
   return <primitive object={label.sprite} position={[table.x, 3.3, table.z]} />

@@ -1,5 +1,5 @@
 import { useFrame } from '@react-three/fiber'
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Quaternion, Vector3 } from 'three'
 
 import { sfx } from '../audio/sfx'
@@ -98,6 +98,8 @@ export function Player({ onAvatarReady }) {
   const groupRef = useRef(null)
   const visualRef = useRef(null)
   const tagRef = useRef(null)
+  /** Top of your head, measured by PlayerAvatar, so your name sits above it. */
+  const [headTop] = useState(() => ({ y: 0 }))
   const atSeat = useRef(false)
   const keys = useKeyboard()
   const velocity = useRef({ x: 0, y: 0, z: 0 })
@@ -221,10 +223,10 @@ export function Player({ onAvatarReady }) {
   return (
     <group ref={groupRef} position={localPlayer.position.toArray()}>
       <group ref={visualRef} rotation={[0, localPlayer.ry, 0]}>
-        <PlayerAvatar onReady={onAvatarReady} targetHeight={PLAYER_HEIGHT} motionRef={motionRef} />
+        <PlayerAvatar onReady={onAvatarReady} targetHeight={PLAYER_HEIGHT} motionRef={motionRef} headTop={headTop} />
       </group>
       <group ref={tagRef}>
-        {selfId && <Nametag id={selfId} name={name || 'You'} streak={streak} title={title} isSelf />}
+        {selfId && <Nametag id={selfId} name={name || 'You'} streak={streak} title={title} isSelf top={headTop} />}
       </group>
     </group>
   )

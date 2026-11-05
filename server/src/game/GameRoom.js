@@ -2,7 +2,9 @@ const { Room, ServerError } = require('@colyseus/core')
 
 const { resolveIdentity } = require('../bloxity/identity')
 const { flushScores, submitScore } = require('../bloxity/leaderboards')
+const Bot = require('./Bot')
 const DATA = require('./data')
+const { petAbility } = require('./pets')
 const profiles = require('./profiles')
 const { GameState, PlayerState, TableState } = require('./schema')
 const { cleanName, Session } = require('./Session')
@@ -18,12 +20,21 @@ const LEADERBOARD_PUSH_MS = 15000
 const PLAYTIME_TICK_MS = 30000
 /** Close code for a session replaced by the same account joining from elsewhere. */
 const REPLACED = 4100
+/** Close code for a player removed for being away (AFK), so their slot frees up. */
+const AWAY = 4101
+/** Close code for a player moved off a server that is shutting down: the client reconnects elsewhere. */
+const MOVING = 4102
+
+/** Every room open in this process (for draining on shutdown). */
+const liveRooms = new Set()
+/** How often everyone is checked for being away. */
+const AFK_CHECK_MS = 5000
 
 /** profile id -> live session, across every room in this process. */
 const liveByProfile = new Map()
 
 /**
- * One game server: up to 20 players sharing the island and its ten tables.
+ * One game server: up to DATA.roomSize (30) players sharing the island and its tables.
  *
  * Colyseus matchmaking fills a room to `maxClients`, locks it, and `joinOrCreate`
  * then opens a new one, so "server size 20" is just the cap here.
@@ -55,10 +66,13 @@ class GameRoom extends Room {
     this.clock.setInterval(() => {
       const now = Date.now()
       for (const table of this.tables) table.tick(now)
+      if (this.draining) this.moveOffDuty()
     }, TICK_MS)
+    liveRooms.add(this)
     this.clock.setInterval(() => this.pushLeaderboard(), LEADERBOARD_PUSH_MS)
     this.lastPlaytimeTick = Date.now()
     this.clock.setInterval(() => this.tickPlaytime(), PLAYTIME_TICK_MS)
+    this.clock.setInterval(() => this.checkAfk(Date.now()), AFK_CHECK_MS)
   }
 
   /**
@@ -125,15 +139,76 @@ class GameRoom extends Room {
     if (liveByProfile.get(session.profile.id) === session) liveByProfile.delete(session.profile.id)
   }
 
+  onDispose() {
+    liveRooms.delete(this)
+  }
+
+  /**
+   * This server is shutting down (a deploy or a scale-down): nobody new comes in;
+   * everyone not in the middle of a duel moves to another server right away, and
+   * the others as soon as their duel ends (see moveOffDuty), so no game is cut short.
+   */
+  drain() {
+    this.draining = true
+    void this.lock()
+    this.moveOffDuty()
+  }
+
+  /** While draining: sends everyone not mid-duel (or watching its result) on their way. */
+  moveOffDuty() {
+    for (const session of this.sessions.values()) {
+      if (session.kicked) continue
+      const phase = session.seat?.table.phase
+      if (phase === 'playing' || phase === 'ended') continue
+      session.toast('Moving you to a fresh server…')
+      this.kick(session, MOVING)
+    }
+  }
+
+  /** Every room open in this process (for the drain on shutdown, see server.js). */
+  static get live() {
+    return liveRooms
+  }
+
   onUncaughtException(error, methodName) {
     console.error(`[game] room ${this.roomId} ${methodName} failed:`, error)
   }
 
-  /** Disconnects a session, including one that is mid-reconnect. */
-  kick(session) {
+  /**
+   * Players who are away free their slot for someone who wants to play: warned
+   * after DATA.afk.warnSec without doing anything ("Are you still there?"), removed
+   * from the room after DATA.afk.kickSec. In a duel the duel's own rule applies
+   * instead (two idle turns lose it), so nobody is removed mid-game.
+   */
+  checkAfk(now) {
+    const { warnSec, kickSec } = DATA.afk
+    for (const session of this.sessions.values()) {
+      if (session.kicked || session.reconnection) continue
+      const phase = session.seat?.table.phase
+      if (phase === 'countdown' || phase === 'playing' || phase === 'ended') {
+        session.lastActiveAt = now
+        continue
+      }
+      const idle = now - session.lastActiveAt
+      if (idle >= kickSec * 1000) {
+        console.log(`[afk] room ${this.roomId}: removing ${session.player.name} after ${Math.round(idle / 1000)} s away`)
+        this.kick(session, AWAY)
+      } else if (idle >= warnSec * 1000 && !session.afkWarned) {
+        session.afkWarned = true
+        session.send('afkWarn', { inMs: kickSec * 1000 - idle })
+      }
+    }
+  }
+
+  /**
+   * Disconnects a session, including one that is mid-reconnect. `code` tells the
+   * client why: REPLACED (joined from elsewhere), AWAY (removed for being AFK) or
+   * MOVING (this server is shutting down: reconnect through the matchmaker).
+   */
+  kick(session, code = REPLACED) {
     session.kicked = true
-    if (session.reconnection) session.reconnection.reject(new Error('replaced'))
-    else session.client.leave(REPLACED)
+    if (session.reconnection) session.reconnection.reject(new Error('kicked'))
+    else session.client.leave(code)
   }
 
   sendWelcome(session, now) {
@@ -170,8 +245,79 @@ class GameRoom extends Room {
     void flushScores()
   }
 
-  /** Extra cash outside the win/loss rewards (the golden chip, a quitter's penalty). Returns it. */
+  /**
+   * May WordBot take the free seat at `table`? Real players come first: only while
+   * the empty tables left can still seat everyone walking around in pairs, so a
+   * room full of practice duels never leaves a real player without a table.
+   */
+  botAllowed(table) {
+    let standing = 0
+    for (const s of this.sessions.values()) if (!s.seat && !s.reconnection) standing += 1
+    let empty = 0
+    for (const t of this.tables) if (t !== table && t.phase === 'waiting' && !t.seats[0] && !t.seats[1]) empty += 1
+    return standing <= empty * 2
+  }
+
+  /**
+   * Two real players each waiting alone should play each other, not WordBot: the
+   * one waiting at another table moves over to `table` (whose player has waited
+   * longer). Returns true if someone moved.
+   */
+  pairWaiting(table, now) {
+    const host = table.seats.find(Boolean)
+    if (!host || host.isBot) return false
+    for (const other of this.tables) {
+      if (other === table || other.phase !== 'waiting') continue
+      const seated = other.seats.filter(Boolean)
+      if (seated.length !== 1 || seated[0].isBot) continue
+      const guest = seated[0]
+      other.leave(guest, now)
+      if (table.sit(guest, now)) return false
+      guest.toast(`Found you an opponent: ${host.player.name}! 🎉`)
+      host.toast(`${guest.player.name} is joining your table! 🎉`)
+      return true
+    }
+    return false
+  }
+
+  /** WordBot takes a seat at `table`: everyone in the room sees it as a player. */
+  addBot(table) {
+    const bot = new Bot(table)
+    this.state.players.set(bot.id, bot.player)
+    return bot
+  }
+
+  removeBot(bot) {
+    this.state.players.delete(bot.id)
+  }
+
+  /**
+   * A word a player got accepted: into their Word Book (milestones pay), the lucky
+   * letter bonus, and quest progress. Returns { fresh, lucky } for the duel's callout.
+   */
+  wordPlayed(session, word, now) {
+    if (!session || session.isBot) return { fresh: false, lucky: false }
+    const p = session.profile
+    const { fresh, milestone } = profiles.addToWordBook(p, word)
+    const lucky = word.endsWith(profiles.luckyLetter(now))
+    if (lucky) {
+      p.cash += DATA.lucky.cash
+      profiles.addQuestEvent(p, 'lucky', 1, now)
+    }
+    if (fresh) profiles.addQuestEvent(p, 'newword', 1, now)
+    profiles.addQuestEvent(p, 'word', 1, now)
+    if (milestone) {
+      session.toast(`📚 Word Book: ${milestone.at} words! +$${milestone.cash}`)
+      this.broadcast('toast', { text: `📚 ${session.player.name} collected ${milestone.at} words!` }, { except: session.client })
+    }
+    profiles.markDirty(p)
+    session.pushProfile(now)
+    return { fresh, lucky }
+  }
+
+  /** Extra cash outside the win/loss rewards (a long-word bonus, a quitter's penalty). Returns it. */
   bonusCash(session, amount, now) {
+    if (!session || session.isBot) return 0
     session.profile.cash += amount
     profiles.markDirty(session.profile)
     session.pushProfile(now)
@@ -180,6 +326,7 @@ class GameRoom extends Room {
 
   /** Takes up to `amount` from a player (never below $0). Returns what was taken. */
   takeCash(session, amount, now) {
+    if (!session || session.isBot) return 0
     const taken = Math.min(amount, session.profile.cash)
     if (taken <= 0) return 0
     session.profile.cash -= taken
@@ -189,6 +336,7 @@ class GameRoom extends Room {
   }
 
   questEvent(session, event, now) {
+    if (!session || session.isBot) return
     profiles.addQuestEvent(session.profile, event, 1, now)
     session.pushProfile(now)
   }
@@ -201,14 +349,34 @@ class GameRoom extends Room {
     return this.tables.find((t) => t.id === id) || null
   }
 
+  /** Duel cash after the weekend boost, a 2X CASH pass and the equipped pet's bonus. */
+  duelCash(p, base, now, { practice = false } = {}) {
+    const passes = p.passes.includes('cash2x') ? 2 : 1
+    const pet = 1 + petAbility(p).cash / 100
+    const rate = practice ? DATA.bot.rewardRate : 1
+    return Math.round(base * (profiles.isWeekend(now) ? 2 : 1) * passes * pet * rate)
+  }
+
   /**
    * Awards a win. `flawless`: won a finished duel without losing a heart.
-   * Returns the cash granted.
+   * `practice`: beat WordBot, which pays less and leaves wins, streaks and the
+   * leaderboards alone (quests and XP still count). Returns the cash granted.
    */
-  recordWin(session, { flawless = false } = {}, now) {
+  recordWin(session, { flawless = false, practice = false } = {}, now) {
+    if (!session || session.isBot) return 0
     const p = session.profile
     const has = (pass) => p.passes.includes(pass)
-    const cash = DATA.winReward * (profiles.isWeekend(now) ? 2 : 1) * (has('cash2x') ? 2 : 1)
+    const cash = this.duelCash(p, DATA.winReward, now, { practice })
+
+    if (practice) {
+      p.cash += cash
+      profiles.addQuestEvent(p, 'play', 1, now)
+      profiles.addQuestEvent(p, 'win', 1, now)
+      profiles.markDirty(p)
+      this.giveXp(session, Math.round(DATA.xp.win * DATA.bot.rewardRate))
+      session.pushProfile(now)
+      return cash
+    }
 
     const streakBefore = p.streak
     p.cash += cash
@@ -257,16 +425,20 @@ class GameRoom extends Room {
    * A lost duel still pays a little (and XP), so every game moves you forward.
    * Quitting or timing out pays nothing. Returns the cash given.
    */
-  recordLoss(session, now, reason = 'slapped') {
+  recordLoss(session, now, reason = 'knockout', { practice = false } = {}) {
+    if (!session || session.isBot) return 0
     const p = session.profile
-    p.streak = 0
+    // Losing to WordBot is practice: the win streak survives it.
+    if (!practice) {
+      p.streak = 0
+      session.player.streak = 0
+    }
     profiles.addQuestEvent(p, 'play', 1, now)
-    const finished = reason === 'slapped'
-    const cash = finished ? DATA.lossReward * (profiles.isWeekend(now) ? 2 : 1) : 0
+    const finished = reason === 'knockout'
+    const cash = finished ? Math.round(this.duelCash(p, DATA.lossReward, now, { practice })) : 0
     p.cash += cash
     profiles.markDirty(p)
-    session.player.streak = 0
-    if (finished) this.giveXp(session, DATA.xp.loss)
+    if (finished) this.giveXp(session, Math.round(DATA.xp.loss * (practice ? DATA.bot.rewardRate : 1)))
     session.pushProfile(now)
     return cash
   }

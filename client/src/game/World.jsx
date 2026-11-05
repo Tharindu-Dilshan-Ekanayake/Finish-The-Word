@@ -1,17 +1,9 @@
 import { useLayoutEffect, useMemo } from 'react'
-import {
-  BoxGeometry,
-  CanvasTexture,
-  MeshBasicMaterial,
-  MeshLambertMaterial,
-  MeshPhongMaterial,
-  PlaneGeometry,
-  SRGBColorSpace,
-} from 'three'
+import { BoxGeometry, MeshBasicMaterial, MeshLambertMaterial, MeshPhongMaterial, PlaneGeometry } from 'three'
 
 import { FLOOR, ISLANDS, ROCKS, TREES, WORLD_HALF } from './layout'
 import Leaderboards from './Leaderboards'
-import { createPlazaGeometry, LAMP_BULBS, lobbyBoxes, RUG_ITEMS } from './lobby'
+import { createPlazaGeometry, LAMP_BULBS, lobbyBoxes } from './lobby'
 import { useSettings } from './quality'
 import { FENCE, GROUND, OCEAN } from './sceneStyle'
 import Shops from './Shops'
@@ -57,37 +49,6 @@ function fenceRails(x1, z1, x2, z2) {
 const H = WORLD_HALF
 const SAND = '#f3d98d'
 
-/**
- * A rug pattern in light tones (instance colour tints it): a plain field, a
- * patterned border band and a thin inner line. 128 px, one shared texture.
- */
-function createRugTexture() {
-  const size = 128
-  const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = size
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#e8e8e8'
-  ctx.fillRect(0, 0, size, size)
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, size, 14)
-  ctx.fillRect(0, size - 14, size, 14)
-  ctx.fillRect(0, 0, 14, size)
-  ctx.fillRect(size - 14, 0, 14, size)
-  ctx.fillStyle = '#9a9a9a'
-  for (let i = 4; i < size; i += 12) {
-    ctx.fillRect(i, 5, 4, 4)
-    ctx.fillRect(i, size - 9, 4, 4)
-    ctx.fillRect(5, i, 4, 4)
-    ctx.fillRect(size - 9, i, 4, 4)
-  }
-  ctx.strokeStyle = '#bcbcbc'
-  ctx.lineWidth = 2
-  ctx.strokeRect(20, 20, size - 40, size - 40)
-  const texture = new CanvasTexture(canvas)
-  texture.colorSpace = SRGBColorSpace
-  return texture
-}
-
 /** Small deterministic hash so decoration varies but never between reloads. */
 const vary = (i, k) => {
   const v = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453
@@ -96,7 +57,7 @@ const vary = (i, k) => {
 
 /**
  * All the box-built scenery (beach, distant islands, trees, rocks, the welcome
- * arch, and the plaza's lamp posts, bunting, planters and props) as instances of one
+ * arch, and the boardwalk's lamp posts, bunting, planters and props) as instances of one
  * unit cube: one draw call.
  */
 function sceneryBoxes() {
@@ -128,8 +89,8 @@ const SCENERY = sceneryBoxes()
 
 /**
  * The island: a grassy studded baseplate fenced in on all sides, ringed by ocean,
- * with the round snack plaza in the middle (see layout.js and lobby.js), voxel trees
- * around the edge and smaller islands on the horizon.
+ * with the summer boardwalk and its word-board decks down the middle (see layout.js
+ * and lobby.js), voxel palms around the edge and smaller islands on the horizon.
  *
  * Repeated props are instanced and multi-part props are merged, so the whole
  * landscape is a dozen or so draw calls.
@@ -159,8 +120,6 @@ export function World({ extras = 'on' }) {
       // White tiles: the plaza's vertex colours paint them.
       plazaTexture: createStudTexture({ base: '#ffffff', alt: '#f2f2f2', size: 256 }),
       plazaGeometry: createPlazaGeometry(GROUND_TILE),
-      rugTexture: createRugTexture(),
-      rugGeometry: new PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
       bulb: new MeshBasicMaterial({ color: '#fff3b0' }),
     }
   }, [])
@@ -172,16 +131,6 @@ export function World({ extras = 'on' }) {
         // Sits just above the baseplate; the offset stops distant flicker.
         polygonOffset: true,
         polygonOffsetFactor: -1,
-      }),
-    [res],
-  )
-
-  const rugMaterial = useDisposable(
-    () =>
-      new MeshLambertMaterial({
-        map: res.rugTexture,
-        polygonOffset: true,
-        polygonOffsetFactor: -2,
       }),
     [res],
   )
@@ -201,7 +150,6 @@ export function World({ extras = 'on' }) {
       <mesh geometry={res.oceanGeometry} material={res.ocean} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.7, 0]} />
 
       <mesh geometry={res.plazaGeometry} material={plazaMaterial} position={[0, FLOOR.plaza, 0]} receiveShadow />
-      <Instanced geometry={res.rugGeometry} material={rugMaterial} items={RUG_ITEMS} receiveShadow />
       <Instanced geometry={res.box} material={res.tinted} items={SCENERY} castShadow={shadows} receiveShadow />
       <Instanced geometry={res.box} material={res.bulb} items={LAMP_BULBS} />
       <Instanced geometry={res.postGeometry} material={res.post} items={posts} castShadow={shadows} />

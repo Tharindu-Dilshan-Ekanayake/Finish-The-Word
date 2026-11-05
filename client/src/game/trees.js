@@ -1,11 +1,10 @@
 /**
  * Voxel trees, built from boxes for the world's shared scenery mesh (no draw calls
- * of their own). Three kinds, picked per tree, each turned and scaled a little so
- * no two look alike:
+ * of their own). Two kinds for the summer island, picked per tree, each turned and
+ * scaled a little so no two look alike:
  *
- *   oak    - chunky rounded canopy in two greens, a branch, roots and a few apples
- *   pine   - stacked tiers, each turned 45 degrees from the last
- *   cherry - like the oak, in pink blossom
+ *   palm - a leaning ringed trunk, coconuts and drooping fronds
+ *   oak  - chunky rounded canopy in two greens, a branch, roots and a few apples
  */
 
 const BARK = '#7a4a26'
@@ -45,23 +44,47 @@ function roundTree(leaves, accent) {
   return parts
 }
 
-function pineTree() {
-  const parts = [
-    [[0, 1.0, 0], [0.55, 2.0, 0.55], BARK_DARK],
-    [[0.32, 0.12, 0], [0.32, 0.24, 0.32], BARK_DARK],
-    [[-0.3, 0.12, -0.12], [0.32, 0.24, 0.32], BARK_DARK],
-  ]
-  const tiers = [3.4, 2.8, 2.2, 1.6, 1.05]
-  tiers.forEach((w, k) => {
-    parts.push([[0, 2.3 + k * 0.95, 0], [w, 1.05, w], k % 2 ? '#2f8f3c' : '#267a33', k % 2 ? Math.PI / 4 : 0])
-  })
-  parts.push([[0, 7.0, 0], [0.42, 0.6, 0.42], '#38a548'])
+const PALM_TRUNK = ['#b07a45', '#9a6638']
+const FRONDS = ['#3fae3a', '#5fd65a']
+const FROND_COUNT = 7
+const FROND_SEGMENTS = 3
+
+/**
+ * A palm: a ringed trunk leaning a little more with each block, coconuts under the
+ * crown and fronds radiating out, each stepping down towards its tip. A frond
+ * segment is a flat box along its own X, so `ry` alone aims it.
+ */
+function palmTree() {
+  const parts = []
+  const blocks = 7
+  let lean = 0
+  for (let k = 0; k < blocks; k += 1) {
+    lean += 0.06 + k * 0.012
+    parts.push([[lean, 0.35 + k * 0.62, 0], [0.5 - k * 0.025, 0.64, 0.5 - k * 0.025], PALM_TRUNK[k % 2]])
+  }
+  const topX = lean
+  const topY = 0.35 + blocks * 0.62
+  for (const [cx, cz] of [[0.22, 0.12], [-0.18, 0.16], [0.02, -0.22]]) {
+    parts.push([[topX + cx, topY - 0.25, cz], [0.28, 0.28, 0.28], '#6b4a26'])
+  }
+  parts.push([[topX, topY + 0.05, 0], [0.7, 0.3, 0.7], FRONDS[0]])
+  for (let f = 0; f < FROND_COUNT; f += 1) {
+    const a = (f / FROND_COUNT) * Math.PI * 2
+    for (let s = 0; s < FROND_SEGMENTS; s += 1) {
+      const d = 0.6 + s * 0.62
+      parts.push([
+        [topX + Math.cos(a) * d, topY + 0.1 - s * s * 0.16, -Math.sin(a) * d],
+        [0.72, 0.1, 0.42 - s * 0.08],
+        FRONDS[(f + s) % 2],
+        a,
+      ])
+    }
+  }
   return parts
 }
 
 const OAK = () => roundTree(['#3fae3a', '#379a33', '#5fd65a'], '#e8382f')
-const CHERRY = () => roundTree(['#ff9ecf', '#f580b9', '#ffc2e0'], '#ffffff')
-const KINDS = [OAK, pineTree, OAK, CHERRY, pineTree, OAK, CHERRY, pineTree]
+const KINDS = [palmTree, OAK, palmTree, palmTree, OAK, palmTree, palmTree, OAK]
 
 /**
  * Every box of every tree, as instances ({ p, s, c, ry }).

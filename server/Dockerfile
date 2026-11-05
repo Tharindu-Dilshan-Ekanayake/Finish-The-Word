@@ -1,6 +1,6 @@
 # Game server image for Bloxity hosting. Build from the repo root, since the server
 # reads ../shared/gameData.json:
-#   docker build -f server/Dockerfile -t slap-chips-server .
+#   docker build -f server/Dockerfile -t finish-the-word-server .
 FROM node:22-alpine
 
 WORKDIR /app/server
@@ -9,6 +9,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY shared /app/shared
 COPY server/src ./src
+# The dictionary (words.js reads it at start). Not the rest of data/: local profiles.
+COPY server/data/words.txt server/data/profanity.txt server/data/profanity-extra.txt server/data/common.txt ./data/
 
 ENV NODE_ENV=production
 # Bloxity injects PORT (2567); this is only the fallback.

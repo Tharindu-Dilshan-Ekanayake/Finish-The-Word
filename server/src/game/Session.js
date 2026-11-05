@@ -1,8 +1,11 @@
 const DATA = require('./data')
+const { eggById, petById, rollPet } = require('./pets')
 const profiles = require('./profiles')
 
 const HALF = DATA.world.half
 const EMOTE_COOLDOWN_MS = 1500
+/** A position this far from the last one (x + y + z) is movement, not a heartbeat. */
+const MOVED = 0.05
 const ANIM_COOLDOWN_MS = 800
 /** Bloxity emote catalogue ids are 24-character hex strings. */
 const ANIM_ID = /^[a-f0-9]{24}$/i
@@ -68,6 +71,9 @@ class Session {
     this.seat = null
     this.lastEmoteAt = 0
     this.lastAnimAt = 0
+    /** When they last did something themselves (see touch), and whether they've been warned. */
+    this.lastActiveAt = now
+    this.afkWarned = false
     /** Verified Bloxity account id, or '' for a guest. */
     this.userId = identity.userId
 
@@ -79,6 +85,7 @@ class Session {
     player.uname = identity.username
     player.streak = this.profile.streak
     player.halo = this.profile.equippedHalo || ''
+    player.pet = this.profile.equippedPet || ''
     player.level = this.profile.level
     player.title = this.profile.equippedTitle || ''
     player.x = DATA.world.spawn[0]
@@ -105,9 +112,11 @@ class Session {
     this.send('profile', { profile: this.profileView(now) })
   }
 
-  /** Back to the lobby spawn point (after losing a duel). */
+  /** Back to the lobby spawn point (after losing a duel), a little to one side. */
   respawn() {
-    const [x, y, z] = DATA.world.spawn
+    const [sx, y, sz] = DATA.world.spawn
+    const x = sx + (Math.random() - 0.5) * 3.2
+    const z = sz + (Math.random() - 0.5) * 1.6
     const p = this.player
     p.x = x
     p.y = y
@@ -132,20 +141,42 @@ class Session {
     profiles.markDirty(this.profile)
   }
 
+  /**
+   * The player did something themselves: they're not AFK (see GameRoom.checkAfk).
+   * A pending "Are you still there?" warning is called off.
+   */
+  touch(now) {
+    this.lastActiveAt = now
+    if (this.afkWarned) {
+      this.afkWarned = false
+      this.send('afkWarn', { inMs: 0 })
+    }
+  }
+
   /** Routes one client message. `msg` is untrusted. */
   handle(type, msg, now) {
     msg = msg && typeof msg === 'object' ? msg : {}
+    // Anything sent on purpose counts as activity. Not a position heartbeat (only
+    // real movement counts, see onPos), nor the avatar the client re-sends by itself.
+    if (type !== 'pos' && type !== 'avatar') this.touch(now)
     switch (type) {
       case 'pos':
-        return this.onPos(msg)
+        return this.onPos(msg, now)
+      case 'active':
+        // A tap, key or click with nothing else to send (menus, camera, chat).
+        return undefined
       case 'sit':
         return this.onSit(msg, now)
       case 'leave':
         return this.seat?.table.leave(this, now)
-      case 'hide':
-        return this.seat?.table.hide(this, msg.cells, now)
-      case 'eat':
-        return this.seat?.table.eat(this, msg.cell, now)
+      case 'word':
+        return this.seat?.table.word(this, msg.text, now)
+      case 'typing':
+        return this.seat?.table.typing(this, msg.n, now)
+      case 'hint':
+        return this.seat?.table.hint(this, now)
+      case 'bot':
+        return this.seat?.table.callBot(this, now)
       case 'emote':
         return this.onEmote(msg, now)
       case 'buy':
@@ -167,12 +198,17 @@ class Session {
     }
   }
 
-  onPos(msg) {
+  onPos(msg, now) {
     if (this.seat) return
     const p = this.player
-    p.x = clamp(finite(msg.x, p.x), -HALF, HALF)
-    p.y = clamp(finite(msg.y, 0), -5, 20)
-    p.z = clamp(finite(msg.z, p.z), -HALF, HALF)
+    const x = clamp(finite(msg.x, p.x), -HALF, HALF)
+    const y = clamp(finite(msg.y, 0), -5, 20)
+    const z = clamp(finite(msg.z, p.z), -HALF, HALF)
+    // Walking or jumping is activity; the once-a-second "still here" resend is not.
+    if (Math.abs(x - p.x) + Math.abs(y - p.y) + Math.abs(z - p.z) > MOVED) this.touch(now)
+    p.x = x
+    p.y = y
+    p.z = z
     p.ry = finite(msg.ry)
     p.s = clamp(finite(msg.s), 0, 20)
     p.g = Boolean(msg.g)
@@ -256,6 +292,10 @@ class Session {
       if (!this.spend(pass.price)) return
       p.passes.push(pass.id)
       this.toast(`${pass.name} unlocked! ${pass.icon}`)
+    } else if (msg.kind === 'egg') {
+      const egg = eggById(msg.id)
+      if (!egg || !this.spend(egg.price)) return
+      this.hatch(egg, now)
     } else if (msg.kind === 'starter') {
       if (p.starterPack) return
       const pack = DATA.starterPack
@@ -272,7 +312,41 @@ class Session {
     this.seat?.table.sync(now)
   }
 
+  /**
+   * Opens a paid-for egg. A pet already owned pays back DATA.petDupRefund of the
+   * egg's price instead. The first pet is equipped straight away. The client plays
+   * the hatching from the 'hatch' message.
+   */
+  hatch(egg, now) {
+    const p = this.profile
+    const petId = rollPet(egg)
+    const dup = p.ownedPets.includes(petId)
+    const refund = dup ? Math.round(egg.price * DATA.petDupRefund) : 0
+    if (dup) p.cash += refund
+    else p.ownedPets.push(petId)
+    if (!p.equippedPet) {
+      p.equippedPet = petId
+      this.player.pet = petId
+    }
+    profiles.addQuestEvent(p, 'hatch', 1, now)
+    const pet = petById(petId)
+    if (!dup && ['legendary', 'mythic'].includes(pet.rarity)) {
+      this.room.broadcast('toast', { text: `${pet.icon} ${this.player.name} hatched a ${pet.rarity.toUpperCase()} ${pet.name}!` })
+    }
+    this.send('hatch', { egg: egg.id, pet: petId, dup, refund })
+  }
+
   onEquip(msg, now) {
+    if (msg.kind === 'pet') {
+      // Equipping the pet you already have out puts it away.
+      const p = this.profile
+      if (msg.id && !p.ownedPets.includes(msg.id)) return
+      p.equippedPet = msg.id && p.equippedPet !== msg.id ? msg.id : ''
+      this.player.pet = p.equippedPet
+      profiles.markDirty(p)
+      this.pushProfile(now)
+      return
+    }
     if (msg.kind === 'title') {
       // Equipping the title you already wear takes it off.
       const p = this.profile

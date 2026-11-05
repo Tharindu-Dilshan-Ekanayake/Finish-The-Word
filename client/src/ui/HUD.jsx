@@ -2,10 +2,12 @@ import { useEffect } from 'react'
 
 import { useBloxity } from '../bloxity/BloxityContext'
 import { sfx } from '../audio/sfx'
+import { DATA } from '../game/layout'
 import { isPlayingPhase, useGame } from '../net/gameStore'
 import { money, useNow } from './format'
 
-const HELP_SEEN_KEY = 'slapchips-seen-help'
+/** Bumped when the rules change, so everyone sees the help once more. */
+const HELP_SEEN_KEY = 'finishtheword-seen-help-2'
 
 const open = (modal, tab) => {
   sfx.click()
@@ -16,6 +18,9 @@ const open = (modal, tab) => {
 const rewardsReady = (profile) => Boolean(profile?.dailyAvailable)
 /** Quests finished but not yet claimed. */
 const questsToClaim = (profile) => profile?.quests.filter((q) => q.progress >= q.goal && !q.claimed).length ?? 0
+const CHEAPEST_EGG = Math.min(...DATA.eggs.map((e) => e.price))
+/** No pet yet, and enough cash for an egg: the Pets tile calls out. */
+const firstPetReady = (profile) => !profile.ownedPets?.length && profile.cash >= CHEAPEST_EGG
 
 /** Round buttons in the top bar, styled and sized like Bloxity's toolbar beside them. */
 function RoundButton({ label, icon, onClick }) {
@@ -128,6 +133,11 @@ function Currency({ profile, className = '', row = false, alignEnd = false, atBo
         />
       </div>
       {profile.weekend && <div className="rainbow-text -mt-1 text-sm font-bold italic">+2x Weekend Boost</div>}
+      {profile.lucky && (
+        <div className="stroke-thin -mt-1 whitespace-nowrap text-sm font-bold text-[#ffe23d]">
+          ⭐ Lucky letter: {profile.lucky.toUpperCase()}
+        </div>
+      )}
     </div>
   )
 }
@@ -212,6 +222,14 @@ function RightTiles({ profile, inCorner = false }) {
         gradient="bg-gradient-to-b from-[#7dff7a] via-[#2fd14f] to-[#169a3a]"
         onClick={() => open('quests')}
         badge={ready ? String(ready) : null}
+      />
+      <Tile
+        label="PETS"
+        icon="🐾"
+        gradient="bg-gradient-to-b from-[#ffb6d0] via-[#ff6b9a] to-[#d8336b]"
+        onClick={() => open('shop', 'pets')}
+        badge={firstPetReady(profile) ? '!' : null}
+        glow={firstPetReady(profile)}
       />
       {!profile.starterPack && (
         <Tile

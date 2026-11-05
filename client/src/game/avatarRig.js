@@ -240,6 +240,39 @@ export function collectRestInverses(root) {
   return out
 }
 
+/** Top of the head in the hat bone's frame when the head mesh can't be measured. */
+const FALLBACK_HEAD_TOP = 1.6
+const _top = new Vector3()
+
+/**
+ * How high the top of the head reaches above the hat bone (Neck1), in that bone's
+ * own frame, from the head mesh's bind-pose geometry. Being in the bone's frame,
+ * `hatBone.localToWorld` turns it into the real top whatever the avatar's height,
+ * head size or pose. The fallback covers custom characters with no head part.
+ */
+export function headTopLocal(rig) {
+  const head = rig.partMeshes?.head
+  const index = rig.skeleton?.bones.indexOf(rig.hatBone) ?? -1
+  if (!head || index < 0) return FALLBACK_HEAD_TOP
+  head.geometry.computeBoundingBox()
+  const box = head.geometry.boundingBox
+  _top.set((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2)
+  // Geometry space -> skeleton bind space -> the bone's own frame.
+  _top.applyMatrix4(head.bindMatrix).applyMatrix4(rig.skeleton.boneInverses[index])
+  return Number.isFinite(_top.y) && _top.y > 0 ? _top.y : FALLBACK_HEAD_TOP
+}
+
+/** The top of a worn head item (hat, hair, mask) in the hat bone's frame. */
+export function itemTopLocal(object) {
+  let top = -Infinity
+  object.traverse((child) => {
+    if (!child.isMesh) return
+    child.geometry.computeBoundingBox()
+    top = Math.max(top, child.geometry.boundingBox.max.y * child.scale.y + child.position.y)
+  })
+  return Number.isFinite(top) ? object.position.y + top * object.scale.y : -Infinity
+}
+
 /** Where head / back items sit in player.glb model space (for custom characters). */
 const MODEL_PLACEMENT = { head: [0, 5.6, 0], back: [0, 4.2, 0] }
 
@@ -525,36 +558,16 @@ function rotateBone(rig, name, which, angle) {
 }
 
 /**
- * The slapping arm through a slap (`p` 0..1, see seatPose): from resting on the
- * table, wound up high above the shoulder with the elbow bent, whipped down and
- * across into the other player's cheek at face height (the body is turned towards
- * them), a short follow-through across the body, then back to the table. `swing`
- * is forward (-) / back (+), `out` is away from the body (- is across it), `elbow`
- * bends the forearm forward (-).
+ * Arm poses at a table (`swing` forward (-) / back (+), `out` away from the body
+ * (- is across it), `elbow` bends the forearm forward (-)):
+ *   point - laughing: the arm straight out at the other player, finger first
+ *   belly - laughing: the other hand clutching the tummy
+ *   face  - laughed at: both hands up over the face
  */
-const SLAP_KEYS = [
-  { at: 0, rest: true, swing: 0, out: 0, elbow: 0 },
-  { at: 0.34, swing: -2.7, out: 0.9, elbow: -1.25 },
-  { at: 0.48, swing: -2.08, out: 0.12, elbow: -0.05 },
-  { at: 0.62, swing: -1.6, out: -0.2, elbow: -0.3 },
-  { at: 1, rest: true, swing: 0, out: 0, elbow: 0 },
-]
-/** Written by slapArmPose (no allocation per frame). */
-const _slapPose = { swing: 0, out: 0, elbow: 0 }
-
-function slapArmPose(p, rest) {
-  let i = 0
-  while (i < SLAP_KEYS.length - 2 && p > SLAP_KEYS[i + 1].at) i += 1
-  const a = SLAP_KEYS[i]
-  const b = SLAP_KEYS[i + 1]
-  const t = smoothstep((p - a.at) / (b.at - a.at))
-  const as = a.rest ? rest : a.swing
-  const bs = b.rest ? rest : b.swing
-  _slapPose.swing = as + (bs - as) * t
-  _slapPose.out = a.out + (b.out - a.out) * t
-  _slapPose.elbow = a.elbow + (b.elbow - a.elbow) * t
-  return _slapPose
-}
+const POINT = { swing: -1.45, out: 0.55, elbow: -0.1 }
+const BELLY = { swing: -0.55, out: -0.35, elbow: -1.35 }
+const FACE = { swing: -2.15, out: -0.4, elbow: -2.05 }
+const lerp = (a, b, t) => a + (b - a) * t
 
 /** Swing a limb forward/back - the plane a walk cycle actually moves in. */
 const swing = (rig, name, angle) => rotateBone(rig, name, 'axisX', angle)
@@ -568,12 +581,12 @@ const turn = (rig, name, angle) => rotateBone(rig, name, 'axisY', angle)
  *
  * @param {object} rig from `collectRig`
  * @param {{ time: number, speed: number, grounded: boolean, maxSpeed: number, seated?: boolean,
- *           dancing?: boolean, eat?: number, chew?: number, slap?: number, headSpin?: number,
- *           down?: boolean, slapPhase?: number, slapArm?: number }} motion
- *   At a table: `eat` (0..1) lifts the hand to the mouth, `chew` (-1..1) nods with
- *   each chew, `slap` (0..1) knocks the chin back, `headSpin` (radians) spins the
- *   head after a slap, `slapPhase` (0..1, -1 when not slapping) swings the `slapArm`
- *   (+1 right, -1 left) through a slap, and `down` lies knocked out on the floor.
+ *           dancing?: boolean, laugh?: number, laughShake?: number, laughArm?: number,
+ *           shame?: number, down?: boolean }} motion
+ *   At a table: `laugh` (0..1) points the `laughArm` (+1 right, -1 left) at the
+ *   other player and clutches the tummy with the other hand, chin up and shaking
+ *   with `laughShake` (-1..1); `shame` (0..1) hides the face in both hands, head
+ *   down; `down` lies fainted on the floor.
  *   `speed` is horizontal speed in world units/sec; `maxSpeed` is what counts as a
  *   full-amplitude run, so the cycle scales smoothly from a walk to a sprint.
  */
@@ -601,9 +614,8 @@ export function animateRig(rig, motion) {
   else rig.animPhase = ((rig.animPhase ?? 0) + dt * (5 + ratio * 5)) % (Math.PI * 2)
 
   rig.root.position.y = rig.rootRestY
-  const headSpin = motion.headSpin || 0
 
-  // --- Knocked out of the chair: flat on the floor, arms and legs flung out ----
+  // --- Fainted off the chair: flat on the floor, arms and legs flung out -------
   if (motion.down) {
     sway(rig, 'ArmL1', 1.35)
     sway(rig, 'ArmR1', -1.35)
@@ -611,7 +623,6 @@ export function animateRig(rig, motion) {
     swing(rig, 'ArmR2', -0.35)
     sway(rig, 'LegL1', 0.3)
     sway(rig, 'LegR1', -0.3)
-    turn(rig, 'Neck1', headSpin)
     sway(rig, 'Neck1', 0.3)
     return
   }
@@ -640,51 +651,37 @@ export function animateRig(rig, motion) {
   // Negative swing is forward for a limb hanging down (see rotateBone); the knee
   // undoes the thigh's rotation so the shin hangs vertically again.
   if (seated) {
-    const { eat = 0, chew = 0, slap = 0, slapPhase = -1, slapArm = 1 } = motion
+    const { laugh = 0, laughShake = 0, laughArm = 1, shame = 0 } = motion
     swing(rig, 'LegL1', -1.5)
     swing(rig, 'LegR1', -1.5)
     swing(rig, 'LegL2', 1.5)
     swing(rig, 'LegR2', 1.5)
 
-    // Hands rest on the table.
+    // Hands rest on the table; laughing or shame blends each arm into its pose.
     const rest = -0.85
-    let lSwing = rest
-    let lOut = 0
-    let lElbow = 0
-    // Taking a bite: the right hand comes up to the mouth (inward is the opposite of
-    // out), the head nods with each chew.
-    let rSwing = rest - eat * 1.35
-    let rOut = -eat * 0.3
-    let rElbow = -eat * 1.55
-    if (slapPhase >= 0) {
-      const pose = slapArmPose(slapPhase, rest)
-      if (slapArm > 0) {
-        rSwing = pose.swing
-        rOut = pose.out
-        rElbow = pose.elbow
-      } else {
-        lSwing = pose.swing
-        lOut = pose.out
-        lElbow = pose.elbow
-      }
-    }
-    swing(rig, 'ArmL1', lSwing)
+    const pointL = laughArm < 0
+    const left = laugh > 0 ? (pointL ? POINT : BELLY) : FACE
+    const right = laugh > 0 ? (pointL ? BELLY : POINT) : FACE
+    const k = Math.max(laugh, shame)
+    // The tummy hand shakes with each "ha".
+    const jiggle = laughShake * 0.12 * laugh
+    swing(rig, 'ArmL1', lerp(rest, left.swing, k) + (pointL ? 0 : jiggle))
     // Outward is positive sway for the left arm, negative for the right.
-    sway(rig, 'ArmL1', lOut)
-    swing(rig, 'ArmL2', lElbow)
-    swing(rig, 'ArmR1', rSwing)
-    sway(rig, 'ArmR1', -rOut)
-    swing(rig, 'ArmR2', rElbow)
+    sway(rig, 'ArmL1', lerp(0, left.out, k))
+    swing(rig, 'ArmL2', lerp(0, left.elbow, k))
+    swing(rig, 'ArmR1', lerp(rest, right.swing, k) + (pointL ? jiggle : 0))
+    sway(rig, 'ArmR1', -lerp(0, right.out, k))
+    swing(rig, 'ArmR2', lerp(0, right.elbow, k))
 
-    // Slapped: the head spins right round, chin knocked up and back.
-    turn(rig, 'Neck1', headSpin)
-    swing(rig, 'Neck1', eat * chew * 0.12 - slap * 0.22)
-    swing(rig, 'Spine1', Math.sin(time * 1.6) * 0.02)
+    // Laughing: chin up, bobbing with each "ha". Ashamed: head down, shaking "no".
+    swing(rig, 'Neck1', -laugh * (0.35 + laughShake * 0.1) + shame * 0.5)
+    turn(rig, 'Neck1', shame * Math.sin(time * 9) * 0.22)
+    swing(rig, 'Spine1', Math.sin(time * 1.6) * 0.02 - laugh * 0.12 + shame * 0.15)
     return
   }
 
   // --- Airborne: tuck the legs, throw the arms up ---------------------------
-  // (Also flying out of the chair after the last slap, head still spinning.)
+  // (Also fainting off the chair.)
   if (!grounded) {
     swing(rig, 'LegL1', -0.55)
     swing(rig, 'LegL2', 0.75)
@@ -693,7 +690,6 @@ export function animateRig(rig, motion) {
     swing(rig, 'ArmL1', -2.1)
     swing(rig, 'ArmR1', -2.1)
     swing(rig, 'Spine1', -0.1)
-    turn(rig, 'Neck1', headSpin)
     return
   }
 

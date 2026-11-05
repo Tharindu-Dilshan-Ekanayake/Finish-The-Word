@@ -1,6 +1,10 @@
 **/node_modules
 **/dist
-server/data
+server/data/*
+!server/data/words.txt
+!server/data/profanity.txt
+!server/data/profanity-extra.txt
+!server/data/common.txt
 client
 .git
 .github

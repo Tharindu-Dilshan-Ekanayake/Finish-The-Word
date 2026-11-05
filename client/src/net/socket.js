@@ -3,9 +3,9 @@ import { Callbacks, Client } from '@colyseus/sdk'
 import { sfx } from '../audio/sfx'
 import { boxityEnv } from '../bloxity/env'
 import { loadEmoteCatalog, onPlatformEvent, platform } from '../bloxity/platform'
-import { DATA, SEATED_BACK, seatPosition, SPAWN } from '../game/layout'
+import { DATA, SEATED_BACK, seatPosition, spawnPoint } from '../game/layout'
 import { getSettings } from '../game/quality'
-import { SLAP_IMPACT_MS, SLAPPING_MS } from '../game/seatPose'
+import { FAINT_DELAY_MS, LAUGH_MS } from '../game/seatPose'
 import { useGame } from './gameStore'
 import {
   actionFx,
@@ -40,14 +40,12 @@ const ROOM_NAME = DATA.bloxity.roomName
 const HOSTING_ID = import.meta.env.VITE_BLOXITY_HOSTING_ID || ''
 const POS_INTERVAL_MS = 100
 const HEARTBEAT_MS = 1000
-/** How long a bite's outcome (crunch / SLAP) stays on screen. */
-const REVEAL_HOLD_MS = 1700
+/** How long a word's (or a timeout's) callout stays on screen. */
+const CALLOUT_MS = 1700
 /** Roughly where a seated player's head is. */
 const SEATED_HEAD_Y = 1.3
-/** A knockout's result waits for the slap to land and the loser to fly out of their chair. */
-const RESULT_AFTER_SLAP_MS = SLAP_IMPACT_MS + 900
-/** How far back from the table (against sideways 1) a knocked-out player flies. */
-const FLY_BACK = 0.45
+/** A knockout's result waits for the loser to faint off their chair. */
+const RESULT_AFTER_FAINT_MS = FAINT_DELAY_MS + 1000
 /** How long the "YOUR TURN!" splash stays up. */
 const TURN_SPLASH_MS = 1300
 /** A cold start can take ~45 s; stop retrying after this long without a room. */
@@ -56,8 +54,12 @@ const GIVE_UP_MS = 60000
 const INITIAL_SYNC_MS = 1500
 /** The server's close code when this account joined from another window. */
 const KICKED_REPLACED = 4100
+/** The server's close code when this player was away too long (AFK) and lost their slot. */
+const KICKED_AWAY = 4101
 /** Consented leave (we called room.leave()). */
 const CONSENTED = 4000
+/** A tap or key press tells the server we're still here, at most this often. */
+const ACTIVE_PING_MS = 10000
 
 let room = null
 /** Matchmaker relay room the current room was reached through (hosting only). */
@@ -75,10 +77,28 @@ let clockOffset = 0
 let deepLinkRoomId = new URLSearchParams(window.location.search).get('roomId')
 /** After signing in mid-game: the room to rejoin with the new identity. */
 let rejoinTarget = null
+/** "Join them": a busier room to move to, `{ roomId, url }` (see moveToRoom). */
+let hopTarget = null
+let lastActivePing = 0
 const lastSent = { x: 0, y: 0, z: 0, ry: 0, s: 0, g: true, at: 0 }
 
 const viaMatchmaker = () => Boolean(HOSTING_ID) && boxityEnv().env !== 'local'
 const toWs = (url) => url.replace(/^http/i, 'ws')
+const toHttp = (url) => url.replace(/^ws/i, 'http')
+const isBotId = (id) => id.startsWith('bot-')
+
+/** A game server reached directly (not through Bloxity's matchmaker). */
+function directUrl() {
+  if (import.meta.env.VITE_SERVER_URL) return import.meta.env.VITE_SERVER_URL
+  // Told it is on a local Bloxity stack: the "matchmaker" is your local game server.
+  // (Only when told: the SDK also calls any localhost page 'local', without one.)
+  const told = window.BLOXITY_ENV
+  if (told?.env === 'local' && told.playUrl) return told.playUrl
+  // Dev: Vite serves the page on :5173, the game server runs on :3000. Self-hosted
+  // production: the game server serves the page itself.
+  if (import.meta.env.DEV) return `${window.location.protocol}//${window.location.hostname}:3000`
+  return window.location.origin
+}
 
 /** Where to open the next connection: `{ url, relayRoomId? }`. */
 async function endpointFor() {
@@ -88,15 +108,60 @@ async function endpointFor() {
     const resolved = await platform.resolveEndpoint(HOSTING_ID, { userId: hello?.userId })
     return { url: resolved.endpoint, relayRoomId: resolved.roomId }
   }
-  if (import.meta.env.VITE_SERVER_URL) return { url: import.meta.env.VITE_SERVER_URL }
-  // Told it is on a local Bloxity stack: the "matchmaker" is your local game server.
-  // (Only when told: the SDK also calls any localhost page 'local', without one.)
-  const told = window.BLOXITY_ENV
-  if (told?.env === 'local' && told.playUrl) return { url: told.playUrl }
-  // Dev: Vite serves the page on :5173, the game server runs on :3000. Self-hosted
-  // production: the game server serves the page itself.
-  if (import.meta.env.DEV) return { url: `${window.location.protocol}//${window.location.hostname}:3000` }
-  return { url: window.location.origin }
+  return { url: directUrl() }
+}
+
+/**
+ * Every room players can join right now, `{ roomId, players, max, open, url }`:
+ * on Bloxity hosting from the cross-pod room directory (all pods), otherwise from
+ * this server's /api/rooms. `players` counts real players only. [] if unavailable.
+ */
+async function listRooms() {
+  try {
+    if (viaMatchmaker()) {
+      const res = await fetch(`${boxityEnv().playUrl}/v1/dir/${encodeURIComponent(HOSTING_ID)}/list`, {
+        signal: AbortSignal.timeout(4000),
+      })
+      const body = await res.json()
+      const rooms = Array.isArray(body) ? body : body.rooms || []
+      return rooms
+        .filter((r) => r.joinUrl && !r.private)
+        .map((r) => {
+          const players = Number(r.clients) || 0
+          const max = Number(r.maxClients) || DATA.roomSize
+          return { roomId: r.colyseusRoomId || r.roomId || r.id, players, max, open: !r.locked && players < max, url: toWs(r.joinUrl) }
+        })
+    }
+    const base = toHttp(directUrl())
+    const res = await fetch(`${base}/api/rooms`, { signal: AbortSignal.timeout(4000) })
+    const rooms = await res.json()
+    return rooms.map((r) => ({ roomId: r.id, players: r.players, max: r.max, open: !r.locked && r.players < r.max, url: base }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * A room with clearly more real players than ours (at least two more) that has
+ * space, for the "Join them" offer to someone in a quiet room. null if none.
+ */
+export async function findBusierRoom() {
+  if (!room) return null
+  const here = Object.keys(useGame.getState().players).filter((id) => !isBotId(id)).length
+  const best = (await listRooms())
+    .filter((r) => r.roomId !== room?.roomId && r.open && r.players >= here + 2)
+    .sort((a, b) => b.players - a.players)[0]
+  return best || null
+}
+
+/** "Join them": leave this room for `target` (from findBusierRoom). */
+export function moveToRoom(target) {
+  if (!hello || !target) return
+  hopTarget = target
+  const previous = detachRoom()
+  firstAttemptAt = 0
+  retryDelay = 500
+  join().finally(() => previous?.leave(true).catch(() => {}))
 }
 
 /** Sends `{ t: type, ...payload }` to the room; dropped while not connected. */
@@ -189,7 +254,12 @@ async function join() {
     let joined = null
     let via = target.relayRoomId || null
 
-    if (rejoinTarget) {
+    if (hopTarget) {
+      const hop = hopTarget
+      hopTarget = null
+      joined = await joinById(hop.url, hop.roomId)
+      via = null
+    } else if (rejoinTarget) {
       const back = rejoinTarget
       rejoinTarget = null
       const url = back.relayRoomId ? `${toWs(boxityEnv().playUrl)}/v1/ws/${back.relayRoomId}` : target.url
@@ -200,7 +270,10 @@ async function join() {
       deepLinkRoomId = null
       joined = await joinDeepLink(id, target)
     }
-    // joinOrCreate fills a room to its 20 players before opening the next one.
+    // Through the endpoint just resolved: on hosting, Bloxity's matchmaker has picked
+    // the pod (it fills one to the room cap before starting the next, and keeps
+    // parties together); on that server joinOrCreate picks its busiest room with
+    // space (sortBy, see server.js).
     joined ||= await new Client(target.url).joinOrCreate(ROOM_NAME, hello)
 
     if (token !== joinToken) {
@@ -247,7 +320,16 @@ function resetWorld() {
   actionFx.clear()
   localPlayer.seat = null
   localPlayer.emote = null
-  useGame.setState({ players: {}, tables: {}, match: null, draft: [], reveal: null })
+  useGame.setState({
+    players: {},
+    tables: {},
+    match: null,
+    wordError: null,
+    oppTyping: null,
+    callout: null,
+    hint: null,
+    freshWords: [],
+  })
 }
 
 /** Wires a freshly joined room's state callbacks and messages into the client. */
@@ -265,6 +347,7 @@ function attach(r) {
     cb.listen(player, 'streak', () => setPlayerMeta(id, player), false)
     cb.listen(player, 'avatar', () => setPlayerMeta(id, player), false)
     cb.listen(player, 'halo', () => setPlayerMeta(id, player), false)
+    cb.listen(player, 'pet', () => setPlayerMeta(id, player), false)
     cb.listen(player, 'level', () => setPlayerMeta(id, player), false)
     cb.listen(player, 'title', () => setPlayerMeta(id, player), false)
     if (id === r.sessionId) return
@@ -307,14 +390,36 @@ function attach(r) {
     clearInterval(posTimer)
     platform.updateRoom('')
     resetWorld()
-    useGame.setState({ status: 'offline' })
-    if (code === KICKED_REPLACED || code === CONSENTED) return
+    // Removed for being away: no automatic rejoin; the "Play again" screen asks.
+    useGame.setState({ status: code === KICKED_AWAY ? 'away' : 'offline', afkWarn: null })
+    if (code === KICKED_REPLACED || code === CONSENTED || code === KICKED_AWAY) return
     // Closed unexpectedly (e.g. its pod is being replaced): resolve again and rejoin.
     scheduleRejoin()
   })
   r.onError((code, message) => console.warn('[net] room error', code, message))
 
   startPositionUpdates()
+}
+
+/* ---- Being here ------------------------------------------------------------------- */
+
+/**
+ * Any tap, click, key or scroll tells the server this player is still here (the
+ * server removes players who are away, see GameRoom.checkAfk): at most every
+ * ACTIVE_PING_MS, and at once if an "Are you still there?" warning is up.
+ * Walking is noticed by the server from position updates on its own.
+ */
+function noteActivity() {
+  if (!room || useGame.getState().status !== 'online') return
+  const warned = Boolean(useGame.getState().afkWarn)
+  const now = Date.now()
+  if (!warned && now - lastActivePing < ACTIVE_PING_MS) return
+  lastActivePing = now
+  room.send('active', {})
+  if (warned) useGame.setState({ afkWarn: null })
+}
+for (const type of ['keydown', 'pointerdown', 'wheel']) {
+  window.addEventListener(type, noteActivity, { capture: true, passive: true })
 }
 
 /* ---- Platform events ------------------------------------------------------------ */
@@ -339,7 +444,7 @@ onPlatformEvent('respawn', () => {
   if (useGame.getState().match) send({ t: 'leave' })
   localPlayer.seat = null
   localPlayer.emote = null
-  localPlayer.position.set(SPAWN[0], SPAWN[1], SPAWN[2])
+  localPlayer.position.set(...spawnPoint())
   localPlayer.ry = Math.PI
   localPlayer.snapCamera = true
 })
@@ -351,6 +456,8 @@ onPlatformEvent('chat', (m) => {
     ? selfId
     : Object.values(players).find((p) => p.uid && p.uid === m.userId)?.id
   if (id) setBubble(id, m.text, m.seconds * 1000)
+  // Chatting (in Bloxity's own chat box) is being here too.
+  if (m.isLocalPlayer) noteActivity()
 })
 
 onPlatformEvent('breakStart', () => sfx.setMuted(true))
@@ -408,6 +515,7 @@ function setPlayerMeta(id, player) {
         level: player.level,
         title: player.title,
         halo: player.halo,
+        pet: player.pet,
         equipped,
         proportions,
       },
@@ -454,11 +562,11 @@ function applyTable(id, t) {
     turn: t.turn || null,
     winner: t.winner || null,
     endsAt: t.endsAt ? t.endsAt - clockOffset : 0,
-    /** Each seat's plate ('0' uneaten, '1' eaten, '2' slap found, '3' golden eaten). */
-    plates: [t.plate0 || '', t.plate1 || ''],
+    /** The letter the next word must start with, the latest word and the chain's length. */
+    letter: t.letter || '',
+    last: t.last || '',
+    count: t.count || 0,
     hearts: [t.hearts0, t.hearts1],
-    /** Where each seat hid its slaps (base-36 cells), once the duel has ended. */
-    shown: [t.shown0 || '', t.shown1 || ''],
   }
   indexSeats(table)
   useGame.setState((s) => ({ tables: { ...s.tables, [id]: table } }))
@@ -500,55 +608,45 @@ function headOf(seat) {
 function playToastSound(text) {
   if (/not enough|need \$|busy|full|walk closer|already|too slow|out of time|nothing left/i.test(text)) sfx.error()
   else if (/bought|unlocked|claimed/i.test(text)) sfx.buy()
-  else if (/quest complete|gift|reward|streak/i.test(text)) sfx.reward()
+  else if (/quest complete|gift|reward|streak|word book|collected|hatched/i.test(text)) sfx.reward()
 }
 
 /** actionFx is keyed by session id, except the local player's entry. */
 const fxKey = (id) => (id === useGame.getState().selfId ? SELF_ANCHOR : id)
 
 /**
- * A slap anywhere in the room: the plate's owner leans over and slaps the eater
- * with their own hand (see seatPose); when it lands, the eater is knocked aside,
- * stars burst off their cheek and, if it was you, the screen edges flush red.
+ * Someone ran out of time (anywhere in the room): the player beside them leans
+ * back laughing and points at them, while they slump with their face in their
+ * hands (see seatPose). `final`: their last heart, so they faint off the chair.
+ * The two players at that table hear it; if it was you, the screen edges flush red.
  */
-function playSlap(id, by, now, final = false) {
+function playLaugh(id, by, now, final = false) {
   const seat = seatOf(id)
   if (!seat) return
   const other = by ? seatOf(by) : null
-  // From the slapped player towards the slapper (the other seat at the table).
-  let dx = other ? other.x - seat.x : Math.cos(seat.ry)
-  let dz = other ? other.z - seat.z : -Math.sin(seat.ry)
-  const len = Math.hypot(dx, dz) || 1
-  dx /= len
-  dz /= len
-  // Is the slapper on the slapped player's right? Then the hit knocks them left,
-  // and the slapper (who faces the same way) reaches over with their left hand.
-  const right = -Math.cos(seat.ry) * dx + Math.sin(seat.ry) * dz > 0
   if (other) {
+    // From the laugher towards the one laughed at.
+    let dx = seat.x - other.x
+    let dz = seat.z - other.z
+    const len = Math.hypot(dx, dz) || 1
+    dx /= len
+    dz /= len
+    // Point with the hand on their side: is the target on the laugher's right?
+    const right = -Math.cos(other.ry) * dx + Math.sin(other.ry) * dz > 0
     const key = fxKey(by)
-    actionFx.set(key, { ...actionFx.get(key), slapping: now, dx: -dx, dz: -dz, arm: right ? -1 : 1 })
+    actionFx.set(key, { ...actionFx.get(key), laughing: now, dx, dz, arm: right ? 1 : -1 })
   }
   const key = fxKey(id)
-  const hit = { slap: now + SLAP_IMPACT_MS, side: right ? -1 : 1 }
-  if (final) {
-    // The last slap knocks them out of the chair: away from the slapper, a little
-    // back from the table.
-    let ax = -dx - Math.sin(seat.ry) * FLY_BACK
-    let az = -dz - Math.cos(seat.ry) * FLY_BACK
-    const n = Math.hypot(ax, az) || 1
-    ax /= n
-    az /= n
-    Object.assign(hit, { fly: now + SLAP_IMPACT_MS, ax, az })
-  }
-  actionFx.set(key, { ...actionFx.get(key), ...hit })
+  actionFx.set(key, { ...actionFx.get(key), shame: now, ...(final ? { faint: now + FAINT_DELAY_MS } : {}) })
 
-  setTimeout(() => {
-    if (!getSettings().particles) return
-    const head = headOf(seat)
-    effectQueue.push({ kind: 'sparks', x: head.x + dx * 0.25, y: head.y, z: head.z + dz * 0.25 })
-  }, SLAP_IMPACT_MS)
-  if (id === useGame.getState().selfId) {
-    useGame.setState({ flash: { kind: 'slap', at: now, delay: SLAP_IMPACT_MS, until: now + SLAP_IMPACT_MS + 800 } })
+  const { selfId } = useGame.getState()
+  if (id === selfId || by === selfId) {
+    sfx.laugh()
+    if (final) sfx.faint()
+  }
+  if (id === selfId) {
+    sfx.oops()
+    useGame.setState({ flash: { kind: 'fail', at: now, delay: 0, until: now + 800 } })
   }
 }
 
@@ -572,29 +670,32 @@ const handlers = {
     localPlayer.seat = next ? { ...seatPosition(next.table, next.seat), dancing: Boolean(next.won) } : null
 
     let turnSplash = useGame.getState().turnSplash
+    const turnStarted = Boolean(next?.myTurn && !prev?.myTurn)
     if (next && prev) {
-      if (next.phase === 'hiding' && prev.phase !== 'hiding') sfx.go()
-      // Your turn: a chime and the big "YOUR TURN!" splash, just as the last bite's
-      // reveal card clears (it is your turn from then on).
-      if (next.myTurn && !prev.myTurn) {
-        const now = Date.now()
-        const { reveal } = useGame.getState()
-        const at = reveal && reveal.until > now ? reveal.until : now
-        setTimeout(() => sfx.turn(), at - now)
-        turnSplash = { at, until: at + TURN_SPLASH_MS }
+      if (next.phase === 'playing' && prev.phase !== 'playing') sfx.go()
+      if (turnStarted) {
+        sfx.turn()
+        // The big "YOUR TURN!" splash only when a chain starts (the first turn, or a
+        // fresh letter after a laugh): mid-chain it would just be in the way.
+        if (prev.phase !== 'playing' || prev.pending) {
+          const now = Date.now()
+          turnSplash = { at: now, until: now + TURN_SPLASH_MS }
+        }
       }
     }
     if (!next?.myTurn) turnSplash = null
     // Standing up leaves the duel behind (a knockout's flight included).
     if (!next) actionFx.delete(SELF_ANCHOR)
-    // A fresh hiding phase (or leaving the table) starts with no chips picked.
-    const freshHide = next?.phase === 'hiding' && prev?.phase !== 'hiding'
     useGame.setState({
       match: next,
       turnSplash,
-      ...(freshHide || !next ? { draft: [], reveal: null } : {}),
+      // A new turn (or leaving) clears the last refusal, the hint and the opponent's typing dots.
+      ...(turnStarted || !next?.myTurn ? { wordError: null, hint: null } : {}),
+      ...(!next?.theirTurn ? { oppTyping: null } : {}),
+      // A new duel (or leaving) starts with no NEW tags in the chain.
+      ...(!next || (next.phase === 'countdown' && prev?.phase !== 'countdown') ? { callout: null, freshWords: [] } : {}),
       // The quit popup only makes sense mid-duel.
-      ...(next?.phase !== 'eating' ? { quitAsk: false } : {}),
+      ...(next?.phase !== 'playing' ? { quitAsk: false } : {}),
     })
   },
 
@@ -610,38 +711,63 @@ const handlers = {
     useGame.setState({ profile: withProfileDeadlines(msg.profile) })
   },
 
-  /** A bite at your table (drumroll), then what was in the chip, for the reveal card. */
+  /** Your duel: a word accepted, a turn timed out, or your opponent typing. */
   duel(msg) {
     const now = Date.now()
-    if (msg.t === 'bite') {
-      sfx.drum()
-      useGame.setState({ reveal: { mine: msg.mine, cell: msg.cell, kind: null, hearts: null, until: now + 5000 } })
-    } else if (msg.t === 'outcome') {
-      if (msg.kind === 'safe') sfx.crunch()
-      else if (msg.kind === 'slap') sfx.slap()
-      else if (msg.kind === 'golden') sfx.golden()
-      const reveal = { mine: msg.mine, cell: msg.cell, kind: msg.kind, hearts: msg.hearts, until: now + REVEAL_HOLD_MS }
-      useGame.setState(
-        msg.kind === 'golden' && msg.mine
-          ? { reveal, flash: { kind: 'golden', at: now, delay: 0, until: now + 900 } }
-          : { reveal },
-      )
+    if (msg.t === 'typing') {
+      useGame.setState({ oppTyping: { n: msg.n, at: now } })
+    } else if (msg.t === 'word') {
+      const lucky = msg.mine && msg.lucky
+      if (msg.bonus || lucky) sfx.golden()
+      else sfx.word()
+      const callout = {
+        kind: 'word',
+        mine: msg.mine,
+        word: msg.word,
+        bonus: msg.bonus,
+        lucky,
+        until: now + CALLOUT_MS,
+      }
+      const { freshWords } = useGame.getState()
+      useGame.setState({
+        callout,
+        ...(msg.mine && msg.fresh ? { freshWords: [...freshWords, msg.word] } : {}),
+        ...((msg.bonus || lucky) && msg.mine ? { flash: { kind: 'golden', at: now, delay: 0, until: now + 900 } } : {}),
+      })
+    } else if (msg.t === 'timeout') {
+      // The laugh and its sounds come with the room-wide 'fx' (see playLaugh).
+      useGame.setState({ callout: { kind: 'timeout', mine: msg.mine, hearts: msg.hearts, until: now + CALLOUT_MS } })
+    } else if (msg.t === 'shield') {
+      sfx.golden()
+      useGame.setState({ callout: { kind: 'shield', mine: msg.mine, hearts: msg.hearts, until: now + CALLOUT_MS } })
     }
   },
 
+  /** Your pet's hint for this turn. */
+  hint(msg) {
+    sfx.reward()
+    useGame.setState({ hint: { word: String(msg.word || '') } })
+  },
+
+  /** An egg you bought: the hatching screen takes it from here. */
+  hatch(msg) {
+    useGame.setState({ hatching: { ...msg, at: Date.now() } })
+  },
+
+  /** The server refused your word: say why, under the input. */
+  wordError(msg) {
+    sfx.error()
+    useGame.setState({ wordError: { reason: String(msg.reason || 'Try another word'), at: Date.now() } })
+  },
+
   /**
-   * Table actions anywhere in the room, so every duel looks alive from the plaza:
-   * a bite (hand to mouth), a slap (the owner slaps the eater) or a golden chip.
+   * Table actions anywhere in the room, so every duel looks alive from the
+   * boardwalk: a laugh (someone was too slow!) or a long word's sparkle.
    */
   fx(msg) {
     const now = Date.now()
-    const key = fxKey(msg.id)
-    if (msg.kind === 'eat') {
-      actionFx.set(key, { ...actionFx.get(key), eat: now })
-      return
-    }
-    if (msg.kind === 'slap') {
-      playSlap(msg.id, msg.by, now, Boolean(msg.final))
+    if (msg.kind === 'laugh') {
+      playLaugh(msg.id, msg.by, now, Boolean(msg.final))
       return
     }
     if (msg.kind === 'golden' && getSettings().particles) {
@@ -655,6 +781,16 @@ const handlers = {
 
   bubble(msg) {
     setBubble(msg.id, msg.text)
+  },
+
+  /**
+   * Away a while: "Are you still there?", removed from the room in `inMs` unless
+   * they do something. `inMs` 0: they did, the warning is off.
+   */
+  afkWarn(msg) {
+    const inMs = Number(msg.inMs) || 0
+    if (inMs > 0) sfx.turn()
+    useGame.setState({ afkWarn: inMs > 0 ? { until: Date.now() + inMs } : null })
   },
 
   toast(msg) {
@@ -682,25 +818,24 @@ const handlers = {
   },
 
   result(msg) {
-    // The winner dances only once every slap has landed: the knockout slap that
-    // just started, or the slaps a quitter is about to get.
+    // The winner dances only once they've finished laughing: at the knockout that
+    // just happened, or at a quitter, a few times over.
     if (msg.winner) {
       const p = msg.punish
-      const slapsFor = p ? (p.first + (p.count - 1) * p.gap) * 1000 : msg.reason === 'slapped' ? 0 : -1
-      if (slapsFor >= 0) {
+      const laughsFor = p ? (p.first + (p.count - 1) * p.gap) * 1000 : msg.reason === 'knockout' ? 0 : -1
+      if (laughsFor >= 0) {
         const key = fxKey(msg.winner)
-        actionFx.set(key, { ...actionFx.get(key), danceAt: Date.now() + slapsFor + SLAPPING_MS + 300 })
+        actionFx.set(key, { ...actionFx.get(key), danceAt: Date.now() + laughsFor + LAUGH_MS })
       }
     }
-    // A knockout's banner waits for the slap to land.
-    const delay = msg.reason === 'slapped' ? RESULT_AFTER_SLAP_MS : 0
-    const mySeat = useGame.getState().match?.seat ?? 0
-    setTimeout(() => showResult(msg, mySeat), delay)
+    // A knockout's banner waits for the loser to faint.
+    const delay = msg.reason === 'knockout' ? RESULT_AFTER_FAINT_MS : 0
+    setTimeout(() => showResult(msg), delay)
   },
 }
 
 /** The duel result: confetti over the winner, and your banner if it was your duel. */
-function showResult(msg, mySeat) {
+function showResult(msg) {
   const { selfId } = useGame.getState()
   const now = Date.now()
 
@@ -720,9 +855,11 @@ function showResult(msg, mySeat) {
         reward: win ? msg.reward : msg.consolation || 0,
         /** What a quitter paid (the winner's reward already includes it). */
         penalty: msg.penalty || 0,
-        theirSlaps: msg.slaps[1 - mySeat] || [],
+        words: msg.words || 0,
+        longest: msg.longest || '',
+        practice: Boolean(msg.practice),
         reason: msg.reason,
-        // A quitter's banner stays up through their slaps (and out of their way).
+        // A quitter's banner stays up through the laughs (and out of their way).
         punished: Boolean(msg.punish),
         until: now + (msg.punish ? 5200 : 4200),
       },

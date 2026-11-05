@@ -9,6 +9,8 @@ import { send } from '../net/api'
 import { money } from './format'
 
 const POLL_MS = 150
+/** WordBot's ids (see server/src/game/Bot.js); real players' are random. */
+const isBotId = (id) => Boolean(id?.startsWith('bot-'))
 
 function nearest() {
   const p = localPlayer.position
@@ -29,7 +31,12 @@ function describe(target, { tables, profile }) {
   if (!target) return null
   if (target.kind === 'table') {
     const t = tables[target.id]
-    const free = !t || (t.phase === 'waiting' && t.seats.some((s) => !s))
+    // A seat is free, or WordBot holds one and the practice duel hasn't begun
+    // (a real player takes its place).
+    const free =
+      !t ||
+      (t.phase === 'waiting' && t.seats.some((s) => !s)) ||
+      (t.phase === 'countdown' && t.seats.some((s) => isBotId(s?.id)))
     return free ? { label: 'Play', enabled: true } : { label: 'Table busy', enabled: false }
   }
   if (target.kind === 'chair') {
@@ -38,6 +45,7 @@ function describe(target, { tables, profile }) {
     if (profile?.ownedChairs.includes(chair.id)) return { label: `Equip ${chair.name}`, enabled: true }
     return { label: `Buy ${chair.name} (${money(chair.price)})`, enabled: true }
   }
+  if (target.kind === 'eggs') return { label: 'Pet Eggs 🥚', enabled: true }
   return { label: 'Emote Shop', enabled: true }
 }
 
@@ -46,6 +54,7 @@ function act(target) {
   sfx.click()
   if (target.kind === 'table') send({ t: 'sit', table: target.id })
   else if (target.kind === 'emoteShop') openModal('shop', 'emotes')
+  else if (target.kind === 'eggs') openModal('shop', 'pets')
   else if (target.kind === 'chair') {
     if (profile?.ownedChairs.includes(target.id)) send({ t: 'equip', id: target.id })
     else send({ t: 'buy', kind: 'chair', id: target.id })

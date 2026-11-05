@@ -8,8 +8,8 @@ import { useDisposable } from './useDisposable'
 
 /**
  * At your own table, a big arrow bouncing over the head of whoever's turn it is:
- * green over you, gold over your opponent. Hidden while a bite is being revealed
- * and outside the eating phase. One draw call, and only while it shows.
+ * green over you, gold over your opponent. Hidden during the pause after a laugh
+ * and outside the playing phase. One draw call, and only while it shows.
  */
 
 const SEATS = new Map(DATA.tables.map((t) => [t.id, [seatPosition(t.id, 0), seatPosition(t.id, 1)]]))
@@ -33,10 +33,9 @@ export function TurnArrow() {
   useFrame(({ clock }) => {
     const mesh = ref.current
     if (!mesh) return
-    const { match, reveal } = useGame.getState()
-    const revealing = reveal && reveal.until > Date.now()
+    const { match } = useGame.getState()
     let seat = -1
-    if (match?.phase === 'eating' && !revealing) seat = match.myTurn ? match.seat : match.theirTurn ? 1 - match.seat : -1
+    if (match?.phase === 'playing') seat = match.myTurn ? match.seat : match.theirTurn ? 1 - match.seat : -1
     mesh.visible = seat >= 0
     if (seat < 0) return
 

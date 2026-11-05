@@ -36,7 +36,10 @@ export function useKeyboard() {
       if (action) keys.current[action] = value
     }
 
+    // Typing a word is not walking (and arrow keys must still move the caret).
+    const typing = (e) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
     const onKeyDown = (e) => {
+      if (typing(e)) return
       if (KEY_MAP[e.code]) e.preventDefault() // stop Space scrolling the page
       set(e.code, true)
     }
