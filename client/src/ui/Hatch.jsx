@@ -37,7 +37,11 @@ function Hatching({ hatching }) {
   const color = RARITY_COLORS[pet.rarity]
 
   return (
-    <div className="pointer-events-auto absolute inset-0 z-[65] flex items-center justify-center bg-black/65">
+    // Hatching starts from the shop, so the popup's bottom banner may still be up.
+    <div
+      className="pointer-events-auto absolute inset-0 z-[65] flex items-center justify-center bg-black/65"
+      style={{ paddingBottom: 'var(--ad-bottom, 0px)' }}
+    >
       {!open ? (
         <div className="flex flex-col items-center gap-4">
           <span

@@ -102,16 +102,33 @@ export function initPlatform(gameSlug = GAME_SLUG) {
 }
 
 /**
- * No ads: every screen Bloxity knows is declared as showing no banners, and the game
- * never asks for one (see setAdScreen). Mid-roll breaks are the portal's to start;
- * the game reports gameplay as running the whole session (gameplayStart at load,
- * gameplayEnd only when the page closes) so none should come mid-game. If one does
- * anyway, the game pauses and mutes until it ends.
+ * Banner ads only round a popup (a menu window): to its left, its right and below
+ * it, on Bloxity's "panel" screen. Every other screen is declared ad-free, so
+ * walking about, duelling and results never show a banner (see setAdScreen and
+ * App's usePopupAds). Mid-roll breaks are the portal's to start; the game reports
+ * gameplay as running the whole session (gameplayStart at load, gameplayEnd only
+ * when the page closes) so none should come mid-game. If one does anyway, the game
+ * pauses and mutes until it ends.
  */
-const NO_BANNERS = { menu: { show: false }, lobby: { show: false }, results: { show: false }, panel: { show: false }, gameplay: { show: false } }
+const SIDE_SIZES = ['300x600', '160x600', '300x250']
+const BOTTOM_SIZES = ['728x90', '320x50']
+const AD_SCREENS = {
+  menu: { show: false },
+  lobby: { show: false },
+  results: { show: false },
+  gameplay: { show: false },
+  panel: {
+    show: true,
+    slots: [
+      { position: 'middle-left', sizes: SIDE_SIZES },
+      { position: 'middle-right', sizes: SIDE_SIZES },
+      { position: 'bottom-center', sizes: BOTTOM_SIZES },
+    ],
+  },
+}
 
 function wireAds(sdk) {
-  safeCall(() => sdk.ads.declareScreens(NO_BANNERS))
+  safeCall(() => sdk.ads.declareScreens(AD_SCREENS))
   safeCall(() =>
     sdk.ads.onBreakStart(() => {
       usePlatform.setState({ paused: true })
@@ -261,27 +278,105 @@ export const platform = {
 
 /* ---- Screen ads ------------------------------------------------------------------ */
 
-let screen = null
-let screenType = null
+/** A menu window's width (Modals' Frame: min(94vw, 36rem)). */
+const POPUP_W = 576
+/** Gap (px) between a banner and the screen edge, and between a banner and the popup. */
+const AD_GAP = 12
+const ALL_POSITIONS = ['top-left', 'top-center', 'top-right', 'middle-left', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right']
+const dims = (size) => size.split('x').map(Number)
 
 /**
- * Tells Bloxity which screen is showing so it can place banners around it. The game
- * shows no ads, so it only ever calls this with null (which also hides any banner
- * Bloxity put up by itself). Kept so ads can be brought back in one place.
+ * Which banners fit round a popup on a w×h (CSS px) screen: the biggest side banner
+ * that fits between the screen edge and the popup, and a bottom banner that does not
+ * run into the side ones. On a phone that is usually just the 320×50 below.
+ * Returns the SDK's screen options ({ skip, sizes }) and `bottom`, the height (px)
+ * the popup must keep clear at the bottom of the screen.
  */
-export function setAdScreen(type) {
+export function popupAdLayout(w, h) {
+  const room = (w - Math.min(0.94 * w, POPUP_W)) / 2 - 2 * AD_GAP
+  const sides = SIDE_SIZES.filter((size) => {
+    const [sw, sh] = dims(size)
+    return sw <= room && sh + 2 * AD_GAP <= h
+  })
+  // The leaderboard banner only on screens tall enough to keep the popup roomy.
+  const bottoms = BOTTOM_SIZES.filter((size) => {
+    const [bw, bh] = dims(size)
+    return bw + 2 * AD_GAP <= w && h >= (bh > 50 ? 540 : 340)
+  })
+  // A side banner (vertically centred) and the bottom one must not overlap.
+  const clash = (side, bottom) => {
+    const [sw, sh] = dims(side)
+    const [bw, bh] = dims(bottom)
+    return (w - bw) / 2 < AD_GAP + sw + AD_GAP && (h + sh) / 2 > h - AD_GAP - bh - AD_GAP
+  }
+  let side = null
+  let bottom = null
+  for (const s of [...sides, null]) {
+    const b = bottoms.find((size) => !s || !clash(s, size)) || null
+    if (s || b) {
+      side = s
+      bottom = b
+      break
+    }
+  }
+
+  const used = []
+  const sizes = {}
+  if (side) {
+    used.push('middle-left', 'middle-right')
+    sizes['middle-left'] = side
+    sizes['middle-right'] = side
+  }
+  if (bottom) {
+    used.push('bottom-center')
+    sizes['bottom-center'] = bottom
+  }
+  return {
+    options: { skip: ALL_POSITIONS.filter((p) => !used.includes(p)), sizes },
+    bottom: bottom ? dims(bottom)[1] + 2 * AD_GAP : 0,
+    any: used.length > 0,
+  }
+}
+
+let screen = null
+let screenKey = ''
+
+/** Space (px) menus keep clear at the bottom of the screen for the banner there. */
+function reserveBottom(px) {
+  document.documentElement.style.setProperty('--ad-bottom', `${px}px`)
+}
+
+/**
+ * Tells Bloxity which screen is showing so it can place banners round it, or null to
+ * take every banner down (which also hides any Bloxity put up by itself). Outside
+ * Bloxity the SDK sends nothing and nothing is reserved.
+ * @param {string|null} type  'panel' while a popup is open, otherwise null
+ * @param {{ options?: object, bottom?: number }} [layout]  from popupAdLayout
+ */
+export function setAdScreen(type, layout = {}) {
+  const key = type ? `${type}:${JSON.stringify(layout.options || {})}` : ''
   // null always goes through: it hides banners the portal may have shown by itself.
-  if (type && type === screenType) return
-  screenType = type
+  if (type && key === screenKey) return
+  screenKey = key
   const s = sdk()
   if (!s?.ads?.screen) return
   if (!type) {
     safeCall(() => screen?.hide())
     safeCall(() => s.ads.hideScreen?.())
     screen = null
+    reserveBottom(0)
     return
   }
-  screen = safeCall(() => s.ads.screen(type, { skip: ['top-right'] })) || null
+  const shown = safeCall(() => s.ads.screen(type, layout.options || {})) || null
+  screen = shown
+  // 'closed' straight away: not embedded, or the portal does no screen ads.
+  const live = Boolean(shown) && shown.state !== 'closed'
+  reserveBottom(live ? layout.bottom || 0 : 0)
+  safeCall(() =>
+    shown?.onStateChange((state) => {
+      if (state === 'closed' && screen === shown) reserveBottom(0)
+    }),
+  )
 }
 
 /* ---- Emote catalogue ---------------------------------------------------------- */

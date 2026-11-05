@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 
-import { platform, setAdScreen, usePlatform } from './bloxity/platform'
+import { platform, popupAdLayout, setAdScreen, usePlatform } from './bloxity/platform'
 import { useGame } from './net/gameStore'
 import { renderStats } from './net/liveState'
 import { useConnection } from './net/useConnection'
@@ -34,16 +34,34 @@ function FpsReadout() {
 }
 
 /**
- * No ads, ever: no banner screen is shown (and every screen is declared ad-free to
- * Bloxity, see platform.wireAds). Re-asserted whenever a menu or the duel changes,
- * in case the portal put one up by itself.
+ * Ads only while a popup (menu window) is open: banners to its left, right and
+ * below it. None while walking about, in a duel or on the results. A duel that
+ * starts while a menu is open closes the menu, so the player sees it begin (and the
+ * banners go with it). Re-checked on resize, which can change what fits.
  */
-function useNoAds() {
+function usePopupAds() {
   const modal = useGame((s) => s.modal)
   const phase = useGame((s) => s.match?.phase)
+  const dueling = phase === 'countdown' || phase === 'playing'
+  const popup = Boolean(modal) && !dueling
+
   useEffect(() => {
-    setAdScreen(null)
-  }, [modal, phase])
+    if (dueling && useGame.getState().modal) useGame.getState().closeModal()
+  }, [dueling])
+
+  useEffect(() => {
+    if (!popup) {
+      setAdScreen(null)
+      return undefined
+    }
+    const apply = () => {
+      const layout = popupAdLayout(window.innerWidth, window.innerHeight)
+      setAdScreen(layout.any ? 'panel' : null, layout)
+    }
+    apply()
+    window.addEventListener('resize', apply)
+    return () => window.removeEventListener('resize', apply)
+  }, [popup])
 }
 
 /** Esc closes an open menu; otherwise, inside Bloxity, it opens Bloxity's menu. */
@@ -60,7 +78,7 @@ function useEscapeMenu() {
 
 function App() {
   useConnection()
-  useNoAds()
+  usePopupAds()
   useEscapeMenu()
   const [ready, setReady] = useState(false)
   const modal = useGame((s) => s.modal)
